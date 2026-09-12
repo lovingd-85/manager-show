@@ -1,0 +1,24 @@
+{
+  "name": "manager-show",
+  "version": "1.0.0",
+  "private": true,
+  "description": "个人运营驾驶舱：今日首页、校招投递 CRM、任务日程、实习成果记录",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "sync:sources": "node scripts/sync-from-sources.js",
+    "build:vendor": "node scripts/build-vendor.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

@@ -1,0 +1,14 @@
+# Dependencies, runtime data, production secrets, and local tooling
+node_modules/
+data/
+.env
+.env.*
+*.log
+
+# Local archives and agent/session configuration
+backups/
+.claude/
+
+# OS/editor and temporary artifacts
+.DS_Store
+*.tmp
