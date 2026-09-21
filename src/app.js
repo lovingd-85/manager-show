@@ -158,7 +158,7 @@ function createApp(options = {}) {
     if (!isValidDate(date)) return bad(res, 'date 格式应为 YYYY-MM-DD');
 
     const focus = db.prepare(
-      'SELECT * FROM tasks WHERE focus_date = ? ORDER BY done ASC, id ASC'
+      'SELECT * FROM tasks WHERE focus_date = ? AND done = 0 ORDER BY id ASC'
     ).all(date).map(serializeTask);
 
     const overdueTasks = db.prepare(
@@ -168,6 +168,16 @@ function createApp(options = {}) {
     const todayTasks = db.prepare(
       'SELECT * FROM tasks WHERE done = 0 AND due_date = ? ORDER BY id ASC'
     ).all(date).map(serializeTask);
+
+    // 全部未完成待办：统计数字与明细同一集合（逾期 → 今天 → 未来 → 无日期）
+    const openTasks = db.prepare(
+      "SELECT * FROM tasks WHERE done = 0 ORDER BY (due_date = '') ASC, due_date ASC, id ASC"
+    ).all().map(serializeTask);
+
+    // 笔试/面试明细：与统计共用同一集合，按下一步日期排序，无日期在最后
+    const interviewApplications = db.prepare(
+      "SELECT * FROM applications WHERE status IN ('笔试', '面试') ORDER BY (next_step_date = '') ASC, next_step_date ASC, id ASC"
+    ).all();
 
     const placeholders = FINAL_STATUSES.map(() => '?').join(',');
     const riskApplications = db.prepare(
@@ -181,13 +191,13 @@ function createApp(options = {}) {
 
     const stats = {
       applications: db.prepare('SELECT COUNT(*) AS n FROM applications').get().n,
-      interviewing: db.prepare("SELECT COUNT(*) AS n FROM applications WHERE status IN ('笔试', '面试')").get().n,
+      interviewing: interviewApplications.length,
       offers: db.prepare("SELECT COUNT(*) AS n FROM applications WHERE status = 'Offer'").get().n,
-      tasksOpen: db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE done = 0').get().n,
+      tasksOpen: openTasks.length,
       achievements: db.prepare('SELECT COUNT(*) AS n FROM achievements').get().n,
     };
 
-    res.json({ date, focus, overdueTasks, todayTasks, riskApplications, upcomingEvents, stats });
+    res.json({ date, focus, overdueTasks, todayTasks, openTasks, interviewApplications, riskApplications, upcomingEvents, stats });
   });
 
   // ---------- 校招投递 CRM ----------
