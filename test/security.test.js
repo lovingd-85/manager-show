@@ -50,6 +50,7 @@ test('未登录：所有读接口返回 401 且不泄露数据', async () => {
     '/api/tasks', '/api/tasks/1',
     '/api/events', '/api/events/1',
     '/api/achievements', '/api/achievements/1',
+    '/api/reminders',
   ];
   for (const p of readPaths) {
     const res = await client.req('GET', p);
@@ -73,6 +74,8 @@ test('未登录：所有写接口返回 401 且数据不被修改', async () => 
     ['POST', '/api/achievements', { title: '入侵成果', date: '2099-01-01' }],
     ['PATCH', '/api/achievements/1', { title: '被篡改成果' }],
     ['DELETE', '/api/achievements/1'],
+    ['POST', '/api/reminders', { entity_type: 'task', entity_key: 'manual:1', remind_at: '2099-01-01T09:00:00.000Z' }],
+    ['PATCH', '/api/reminders/1', { status: 'read' }],
     ['POST', '/api/seed/reset'],
   ];
   for (const [method, p, body] of writeAttempts) {
@@ -221,6 +224,14 @@ test('CSRF：跨站写请求被拒绝，同源写请求正常', async () => {
   // 确认跨站请求未写入
   const tasks = (await client.req('GET', '/api/tasks')).json;
   assert.ok(tasks.every((t) => t.title !== '跨站任务' && t.title !== '跨站任务2'));
+
+  // 提醒接口同样受 CSRF 校验保护
+  const evilReminder = await client.req('POST', '/api/reminders', {
+    body: { entity_type: 'task', entity_key: 'manual:1', remind_at: '2099-01-01T09:00:00.000Z' },
+    headers: { Origin: 'https://evil.example.com' },
+  });
+  assert.equal(evilReminder.status, 403);
+  assert.equal((await client.req('GET', '/api/reminders')).json.length, 0, '跨站提醒请求不得写入');
 
   // 登录接口本身同样受 CSRF 校验保护
   const evilLogin = await client.req('POST', '/api/auth/login', {

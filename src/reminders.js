@@ -43,11 +43,21 @@ function resolveEntity(db, entityType, key) {
   if (!parsed) return undefined;
   const table = entityType === 'task' ? 'tasks' : 'events';
   if (parsed.kind === 'manual') {
-    return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(parsed.id);
+    return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(parsed.id) || null;
   }
   if (!hasSourceColumns(db, table)) return undefined;
   return db.prepare(`SELECT * FROM ${table} WHERE source = ? AND external_key = ?`)
-    .get(parsed.source, parsed.externalKey);
+    .get(parsed.source, parsed.externalKey) || null;
+}
+
+// 严格解析提醒时间：必须带时区（Z 或 ±HH:MM），返回规范化 UTC ISO；非法返回 null。
+// 正则只保证格式，Date.parse 排除 2026-02-30 这类滚动日期。
+function parseRemindAt(value) {
+  if (typeof value !== 'string') return null;
+  if (!/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)(Z|[+-]\d{2}:\d{2})$/.test(value)) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
 // 一条记录的全部稳定键（手工 id + 可能的同步键），用于删除/完成时取消提醒
@@ -93,6 +103,7 @@ module.exports = {
   ACTIVE_STATUSES,
   withTransaction,
   parseEntityKey,
+  parseRemindAt,
   hasSourceColumns,
   resolveEntity,
   activeKeysFor,

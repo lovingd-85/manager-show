@@ -13,6 +13,17 @@ const { todayLocal, addDays, isValidDate, nowIso } = require('./dates');
 const v = require('./validate');
 const auth = require('./auth');
 const { createRateLimiter } = require('./rate-limit');
+const {
+  ACTIVE_STATUSES,
+  withTransaction,
+  parseEntityKey,
+  parseRemindAt,
+  resolveEntity,
+  activeKeysFor,
+  cancelActiveForEntity,
+  activateDue,
+  cancelInvalid,
+} = require('./reminders');
 
 const APP_STATUSES = ['待投递', '已投递', '笔试', '面试', '流程完成', 'Offer', '已拒绝', '已结束'];
 const FINAL_STATUSES = ['流程完成', 'Offer', '已拒绝', '已结束'];
@@ -41,6 +52,8 @@ function createApp(options = {}) {
     cookieSecure,
     trustProxy,
     allowSeedReset = false,
+    // 提醒相关时间计算使用可注入时钟（测试无需真等时间）；默认真实时间
+    now = nowIso,
   } = options;
 
   const db = openDb(dbPath);
@@ -355,8 +368,12 @@ function createApp(options = {}) {
     if (!parsed.ok) return bad(res, parsed.error);
     const merged = { ...row, ...parsed.value };
     const doneAt = merged.done ? (row.done ? row.done_at : nowIso()) : null;
-    db.prepare('UPDATE tasks SET title=?, category=?, due_date=?, focus_date=?, done=?, notes=?, done_at=? WHERE id=?')
-      .run(merged.title, merged.category, merged.due_date, merged.focus_date, merged.done ? 1 : 0, merged.notes, doneAt, row.id);
+    withTransaction(db, () => {
+      db.prepare('UPDATE tasks SET title=?, category=?, due_date=?, focus_date=?, done=?, notes=?, done_at=? WHERE id=?')
+        .run(merged.title, merged.category, merged.due_date, merged.focus_date, merged.done ? 1 : 0, merged.notes, doneAt, row.id);
+      // 完成任务的同一事务内取消活跃提醒，避免半更新（失败则整体回滚）
+      if (merged.done) cancelActiveForEntity(db, 'task', activeKeysFor('task', row));
+    });
     res.json(serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(row.id)));
   });
 
@@ -367,7 +384,10 @@ function createApp(options = {}) {
     if (row.source && row.source !== 'manual') {
       return res.status(409).json({ error: '同步记录只读，请复制为个人待办' });
     }
-    db.prepare('DELETE FROM tasks WHERE id = ?').run(row.id);
+    withTransaction(db, () => {
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(row.id);
+      cancelActiveForEntity(db, 'task', activeKeysFor('task', row));
+    });
     res.status(204).end();
   });
 
@@ -441,8 +461,12 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/events/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM events WHERE id = ?').run(req.params.id);
-    if (info.changes === 0) return notFound(res, '日程');
+    const row = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id);
+    if (!row) return notFound(res, '日程');
+    withTransaction(db, () => {
+      db.prepare('DELETE FROM events WHERE id = ?').run(row.id);
+      cancelActiveForEntity(db, 'event', activeKeysFor('event', row));
+    });
     res.status(204).end();
   });
 
@@ -501,6 +525,112 @@ function createApp(options = {}) {
     const info = db.prepare('DELETE FROM achievements WHERE id = ?').run(req.params.id);
     if (info.changes === 0) return notFound(res, '成果');
     res.status(204).end();
+  });
+
+  // ---------- 站内提醒 ----------
+  // v1 边界：仅站内提醒中心（关闭网页不主动推送）；时间语义为明确时区的 ISO。
+  // entity_key 见 src/reminders.js：manual:<id> 或 <source>:<external_key>。
+  function serializeReminder(row) {
+    const parsed = parseEntityKey(row.entity_key);
+    let entityTitle = '';
+    let entityId = null;
+    const entity = resolveEntity(db, row.entity_type, row.entity_key);
+    if (entity) {
+      entityTitle = entity.title;
+      // 仅手工记录的自增 id 可稳定跳转；同步 id 会被重建，不提供
+      if (parsed && parsed.kind === 'manual') entityId = entity.id;
+    }
+    return {
+      ...row,
+      triggered_at: row.triggered_at || null,
+      read_at: row.read_at || null,
+      entity_title: entityTitle,
+      entity_id: entityId,
+    };
+  }
+
+  app.post('/api/reminders', (req, res) => {
+    const body = req.body || {};
+    if (body.entity_type !== 'task' && body.entity_type !== 'event') {
+      return bad(res, 'entity_type 只能是 task 或 event');
+    }
+    const parsedKey = parseEntityKey(body.entity_key);
+    if (!parsedKey) return bad(res, 'entity_key 格式非法');
+    const entity = resolveEntity(db, body.entity_type, body.entity_key);
+    if (entity === undefined) {
+      return bad(res, '该记录来源无法稳定引用，请复制为个人待办后设置提醒');
+    }
+    if (!entity) return notFound(res, '事项');
+    if (body.entity_type === 'task' && entity.done) {
+      return bad(res, '事项已完成，无法设置提醒');
+    }
+    const remindAt = parseRemindAt(body.remind_at);
+    if (!remindAt) return bad(res, 'remind_at 必须是带时区的 ISO 时间（如 2030-01-01T09:00:00Z）');
+    if (!(Date.parse(remindAt) > Date.parse(now()))) return bad(res, '提醒时间必须晚于当前时刻');
+    try {
+      const info = db.prepare(`INSERT INTO reminders (entity_type, entity_key, remind_at, status, created_at)
+        VALUES (?, ?, ?, 'scheduled', ?)`).run(body.entity_type, body.entity_key, remindAt, now());
+      const row = db.prepare('SELECT * FROM reminders WHERE id = ?').get(info.lastInsertRowid);
+      res.status(201).json(serializeReminder(row));
+    } catch (err) {
+      // 同一实体同一时刻只有一个活跃提醒（唯一索引），重复设置给出明确语义
+      if (String(err.message || err).includes('UNIQUE')) {
+        return res.status(409).json({ error: '该事项已有活跃提醒' });
+      }
+      throw err;
+    }
+  });
+
+  app.get('/api/reminders', (req, res) => {
+    const t = now();
+    withTransaction(db, () => {
+      activateDue(db, t);
+      cancelInvalid(db);
+    });
+    const rows = db.prepare(
+      `SELECT * FROM reminders WHERE status IN ('scheduled', 'unread')
+       ORDER BY (status = 'unread') DESC, remind_at ASC, id ASC`
+    ).all();
+    res.json(rows.map(serializeReminder));
+  });
+
+  app.patch('/api/reminders/:id', (req, res) => {
+    const row = db.prepare('SELECT * FROM reminders WHERE id = ?').get(req.params.id);
+    if (!row) return notFound(res, '提醒');
+    const body = req.body || {};
+    // 更新时不允许篡改关联实体
+    if (body.entity_type !== undefined || body.entity_key !== undefined) {
+      return bad(res, '不允许修改提醒关联的事项');
+    }
+    const active = ACTIVE_STATUSES.includes(row.status);
+    let remindAt = row.remind_at;
+    if (body.remind_at !== undefined) {
+      if (!active) return bad(res, '该提醒已读或已取消，不能修改时间');
+      const parsed = parseRemindAt(body.remind_at);
+      if (!parsed) return bad(res, 'remind_at 必须是带时区的 ISO 时间（如 2030-01-01T09:00:00Z）');
+      if (!(Date.parse(parsed) > Date.parse(now()))) return bad(res, '提醒时间必须晚于当前时刻');
+      remindAt = parsed;
+    }
+    let status = row.status;
+    let readAt = row.read_at;
+    if (body.status !== undefined) {
+      if (body.status === 'read') {
+        if (!active) return bad(res, '该提醒已读或已取消');
+        status = 'read';
+        readAt = now();
+      } else if (body.status === 'cancelled') {
+        if (row.status === 'cancelled') return bad(res, '该提醒已取消');
+        status = 'cancelled';
+      } else {
+        return bad(res, 'status 只能是 read 或 cancelled');
+      }
+    }
+    if (remindAt === row.remind_at && status === row.status && readAt === row.read_at) {
+      return bad(res, '没有可更新的字段');
+    }
+    db.prepare('UPDATE reminders SET remind_at=?, status=?, read_at=? WHERE id=?')
+      .run(remindAt, status, readAt, row.id);
+    res.json(serializeReminder(db.prepare('SELECT * FROM reminders WHERE id = ?').get(row.id)));
   });
 
   // ---------- 示例数据重置（破坏性接口，默认不注册：生产无入口也不可调用） ----------
