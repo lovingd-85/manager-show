@@ -289,7 +289,7 @@ async function renderToday() {
     </div>`;
 
   bindTaskToggles(box, () => rerender(renderToday));
-  return box.innerHTML;
+  return box;
 }
 
 function focusItem(t, i) {
@@ -376,7 +376,7 @@ async function renderCampus() {
     const a = apps.find((x) => x.id === Number(card.dataset.appId));
     if (a) openAppModal(a);
   }));
-  return box.innerHTML;
+  return box;
 }
 
 function appCard(a) {
@@ -533,7 +533,7 @@ async function renderTasks() {
     const ev = events.find((x) => x.id === Number(b.dataset.eventEdit));
     if (ev) openEventModal(ev);
   }));
-  return box.innerHTML;
+  return box;
 }
 
 function taskRow(t, today) {
@@ -637,7 +637,7 @@ async function renderAchievements() {
     const a = list.find((x) => x.id === Number(b.dataset.achEdit));
     if (a) openAchModal(a);
   }));
-  return box.innerHTML;
+  return box;
 }
 
 function openAchModal(a) {
@@ -669,10 +669,18 @@ function openAchModal(a) {
   });
 }
 
+/* ---------- 真实 DOM 挂载 ----------
+   render 函数返回真实节点（事件监听器随节点保留），错误字符串仍走 esc。
+   绝不 cloneNode（克隆会丢监听器），绝不重建背景 Canvas。 */
+function mountView(content) {
+  if (typeof content === 'string') view.innerHTML = content;
+  else view.replaceChildren(content);
+}
+
 /* ---------- 数据刷新（非路由切换）：直接替换 #view 内容，不播过渡动画 ---------- */
 async function rerender(renderFn) {
   try {
-    view.innerHTML = await renderFn();
+    mountView(await renderFn());
   } catch (err) {
     view.innerHTML = `<div class="card panel empty">加载失败：${esc(err.message)}</div>`;
   }
@@ -724,7 +732,7 @@ async function route() {
   if (seq !== navSeq) return;
 
   view.classList.remove('view-leaving');
-  view.innerHTML = html;
+  mountView(html);
   if (!instant) {
     view.classList.add('view-entering');   // 入场：淡入 + 轻微上移
     waitAnimEnd(view, 400).then(() => {

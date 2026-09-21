@@ -19,3 +19,17 @@ test('浏览器回归环境：登录后打开页面无错误，基础骨架渲�
     await b.close();
   }
 });
+
+test('校招投递页：点击「新增投递」打开弹窗（事件挂载不丢失）', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/campus');
+    await b.page.waitForSelector('#btn-add-app');
+    await b.page.click('#btn-add-app');
+    await b.page.waitForSelector('#modal-mask:not([hidden])', { timeout: 4000 });
+    assert.equal(await b.page.textContent('#modal-title'), '新增投递');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
