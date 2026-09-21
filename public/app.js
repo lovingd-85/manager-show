@@ -233,45 +233,39 @@ function openModal({ title, fields, values = {}, submitText = '保存', onSubmit
 /* ---------- 视图：今日首页 ---------- */
 async function renderToday() {
   const d = await apiGet('/api/dashboard?date=' + todayStr());
-  const statDefs = [
-    ['投递总数', d.stats.applications, '▤', 'k1'], ['笔试/面试中', d.stats.interviewing, '◉', 'k2'],
-    ['Offer', d.stats.offers, '✦', 'k3'], ['待办任务', d.stats.tasksOpen, '✓', 'k4'], ['成果记录', d.stats.achievements, '★', 'k5'],
-  ];
+  const today = d.date || todayStr();
+  const openCount = d.openTasks.length;
+  const riskCount = d.overdueTasks.length + d.riskApplications.length;
 
   const box = document.createElement('div');
   box.innerHTML = `
-    <div class="stats-strip">
-      ${statDefs.map(([label, n, ico, k]) => `
-        <div class="card stat ${k}">
-          <div class="stat-num">${n}</div>
-          <div class="stat-label">${label}</div>
-          <span class="stat-ico" aria-hidden="true">${ico}</span>
-          <span class="stat-glow" aria-hidden="true"></span>
-        </div>`).join('')}
+    <div class="quick-add">
+      <button class="btn btn-primary" id="btn-quick-task">＋ 新增待办</button>
+      <button class="btn btn-ghost" id="btn-quick-app">＋ 新增投递</button>
     </div>
     <div class="dash-grid">
       <div class="dash-col">
-        <section class="card panel">
-          <h3 class="section-title">◉ 今日重点 <span class="count">${d.focus.length} 项</span></h3>
-          ${d.focus.length === 0 ? '<div class="empty"><span class="empty-glyph">◌</span><p>还没有今日重点，去「任务日程」把任务标记为今日重点吧</p></div>' : ''}
-          ${d.focus.slice(0, 3).map((t, i) => focusItem(t, i)).join('')}
-          ${d.focus.length > 3 ? `<div class="empty">另有 ${d.focus.length - 3} 项重点，见任务页</div>` : ''}
+        <section class="card panel dash-todo">
+          <h3 class="section-title"><a class="link" href="#/tasks?state=open">✓ 全部待办 <span class="count">${openCount} 项</span></a></h3>
+          ${openCount === 0 ? '<div class="empty"><span class="empty-glyph">✓</span><p>没有未完成的待办</p></div>' : ''}
+          ${d.openTasks.slice(0, 5).map((t) => taskRow(t, today)).join('')}
+          ${openCount > 5 ? `<div class="dash-more"><a class="link" href="#/tasks?state=open">查看全部 ${openCount} 项</a></div>` : ''}
         </section>
-        <section class="card panel">
-          <h3 class="section-title">▸ 今日待办 <span class="count">${d.todayTasks.length} 项</span></h3>
-          ${d.todayTasks.length === 0 ? '<div class="empty"><span class="empty-glyph">✓</span><p>今天没有截止的任务</p></div>' : ''}
-          ${d.todayTasks.map((t) => `
-            <div class="focus-item">
-              <input type="checkbox" class="check" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''}/>
-              <div><div class="focus-title">${esc(t.title)}</div>
-              <div class="focus-meta">${esc(t.category)}</div></div>
-            </div>`).join('')}
+        <section class="card panel dash-focus">
+          <h3 class="section-title">◉ 今日重点 <span class="count">${d.focus.length} 项</span></h3>
+          ${d.focus.length === 0 ? `
+            <div class="empty">
+              <span class="empty-glyph">◌</span><p>还没有今日重点</p>
+              <button class="btn btn-primary" id="btn-add-focus-task">＋ 新增待办</button>
+            </div>` : ''}
+          ${d.focus.slice(0, 3).map((t, i) => focusItem(t, i)).join('')}
+          ${d.focus.length > 3 ? `<div class="empty">另有 ${d.focus.length - 3} 项重点，见<a class="link" href="#/tasks?state=open">任务页</a></div>` : ''}
         </section>
       </div>
       <div class="dash-col">
         <section class="card panel">
-          <h3 class="section-title">⚠ 逾期与风险 <span class="count">${d.overdueTasks.length + d.riskApplications.length} 项</span></h3>
-          ${d.overdueTasks.length + d.riskApplications.length === 0 ? '<div class="empty"><span class="empty-glyph">✓</span><p>一切正常，没有逾期与风险 🎉</p></div>' : ''}
+          <h3 class="section-title">⚠ 提醒 <span class="count">${riskCount} 项</span></h3>
+          ${riskCount === 0 ? '<div class="empty"><span class="empty-glyph">✓</span><p>一切正常，没有逾期与风险 🎉</p></div>' : ''}
           ${d.overdueTasks.map((t) => `
             <div class="risk-item">
               <div class="risk-head"><span class="badge b-red">任务逾期</span>
@@ -287,18 +281,67 @@ async function renderToday() {
               <div class="risk-meta">下一步「${esc(a.next_step)}」原定 ${fmtCN(a.next_step_date)}，请尽快跟进</div>
             </div>`).join('')}
         </section>
-      </div>
-      <div class="dash-col">
         <section class="card panel">
           <h3 class="section-title">▸ 近期日程 <span class="count">未来 7 天</span></h3>
           ${d.upcomingEvents.length === 0 ? '<div class="empty"><span class="empty-glyph">▦</span><p>未来 7 天没有日程</p></div>' : ''}
           ${d.upcomingEvents.map((e) => eventItem(e)).join('')}
         </section>
       </div>
+      <div class="dash-col">
+        <section class="card panel">
+          <h3 class="section-title">▤ 求职摘要</h3>
+          ${jobStatCards(d.stats)}
+        </section>
+        <section class="card panel dash-interviews">
+          <h3 class="section-title">◉ 笔试/面试明细 <span class="count">${d.interviewApplications.length} 项</span></h3>
+          ${d.interviewApplications.length === 0 ? '<div class="empty"><span class="empty-glyph">◉</span><p>当前没有进行中的笔试或面试</p></div>' : ''}
+          ${d.interviewApplications.map(interviewItem).join('')}
+        </section>
+      </div>
     </div>`;
 
   bindTaskToggles(box, () => rerender(renderToday));
+  $('#btn-quick-task', box).addEventListener('click', () => openTaskModal(null));
+  $('#btn-quick-app', box).addEventListener('click', () => openAppModal(null));
+  const focusAdd = $('#btn-add-focus-task', box);
+  if (focusAdd) focusAdd.addEventListener('click', () => openTaskModal(null));
+  box.querySelectorAll('[data-task-edit]').forEach((b) => b.addEventListener('click', () => {
+    const t = d.openTasks.find((x) => x.id === Number(b.dataset.taskEdit));
+    if (t) openTaskModal(t);
+  }));
   return box;
+}
+
+// 统计卡是可点击的 <a>：点数字直达可解释的明细页
+function jobStatCards(stats) {
+  const defs = [
+    ['投递总数', stats.applications, '▤', 'k1', '#/campus'],
+    ['笔试/面试中', stats.interviewing, '◉', 'k2', '#/campus?stage=interviewing'],
+    ['Offer', stats.offers, '✦', 'k3', '#/campus?status=Offer'],
+    ['待办任务', stats.tasksOpen, '✓', 'k4', '#/tasks?state=open'],
+    ['成果记录', stats.achievements, '★', 'k5', '#/achievements'],
+  ];
+  return defs.map(([label, n, ico, k, href]) => `
+    <a class="card stat ${k}" href="${href}">
+      <div class="stat-num">${n}</div>
+      <div class="stat-label">${label}</div>
+      <span class="stat-ico" aria-hidden="true">${ico}</span>
+      <span class="stat-glow" aria-hidden="true"></span>
+    </a>`).join('');
+}
+
+// 笔试/面试明细条目：点击深链到投递记录；无下一步日期明确「未安排」
+function interviewItem(a) {
+  const badge = a.status === '面试' ? 'b-blue' : 'b-amber';
+  return `
+    <a class="interview-item" href="#/campus?id=${a.id}">
+      <div class="interview-head">
+        <span class="badge ${badge}">${esc(a.status)}</span>
+        <span class="interview-company">${esc(a.company)}</span>
+        <span class="interview-pos">${esc(a.position)}</span>
+      </div>
+      <div class="interview-meta">下一步「${esc(a.next_step)}」${a.next_step_date ? ' · ' + fmtCN(a.next_step_date) : ' · 未安排'}</div>
+    </a>`;
 }
 
 function focusItem(t, i) {
@@ -725,7 +768,7 @@ function taskRow(t, today) {
 
 function openTaskModal(t) {
   openModal({
-    title: '编辑任务',
+    title: t ? '编辑任务' : '新增待办',
     fields: [
       { name: 'title', label: '标题', required: true, full: true },
       { name: 'category', label: '分类', type: 'select', options: TASK_CATEGORIES },
@@ -733,17 +776,22 @@ function openTaskModal(t) {
       { name: 'focus_date', label: '重点日期（设为今日重点则填今天）', type: 'date', full: true },
       { name: 'notes', label: '备注', type: 'textarea' },
     ],
-    values: t,
+    values: t || {},
     onSubmit: async (data) => {
-      await api('PATCH', `/api/tasks/${t.id}`, data);
-      toast('任务已更新');
+      if (t) {
+        await api('PATCH', `/api/tasks/${t.id}`, data);
+        toast('任务已更新');
+      } else {
+        await api('POST', '/api/tasks', data);
+        toast('任务已添加');
+      }
       rerender(currentRender());
     },
-    onDelete: async () => {
+    onDelete: t ? async () => {
       await api('DELETE', `/api/tasks/${t.id}`);
       toast('任务已删除');
       rerender(currentRender());
-    },
+    } : null,
   });
 }
 

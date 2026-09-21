@@ -147,9 +147,11 @@ test('app.js：全部交互绑定与视图契约未被破坏', () => {
   assert.ok(js.includes("'Offer': 'b-gold'"), 'Offer 状态应使用金色徽章');
   assert.match(js, /const APP_STATUSES = \['待投递', '已投递', '笔试', '面试', '流程完成', 'Offer', '已拒绝', '已结束'\]/, '状态枚举不应变化');
   // 结构类契约（模板依赖的类名）
-  for (const cls of ['stats-strip', 'dash-grid', 'board', 'two-col', 'timeline', 'inline-form', 'chip-row']) {
+  for (const cls of ['quick-add', 'dash-todo', 'dash-focus', 'dash-interviews', 'dash-grid', 'board', 'two-col', 'timeline', 'inline-form', 'chip-row']) {
     assert.ok(js.includes(cls), `app.js 模板缺少结构类 ${cls}`);
   }
+  // 统计卡是真实链接（可点击、可解释），不再是无效果的 div
+  assert.match(js, /<a class="card stat/, '统计卡应为可点击的 <a> 链接');
 });
 
 /* ---------- 真实 HTTP 流程 ---------- */

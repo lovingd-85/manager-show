@@ -294,6 +294,94 @@ test('重复提交防护：一次表单提交只触发一次 POST（无重复监
   }
 });
 
+/* ---------- 首页：可解释明细与可点击统计入口 ---------- */
+
+test('首页：全部待办链接可点击，能看到未来与无日期任务', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.api('POST', '/api/tasks', { title: '未来任务', category: '生活', due_date: '2030-01-01' });
+    await b.api('POST', '/api/tasks', { title: '无日期任务', category: '生活' });
+    await b.page.goto(b.baseUrl + '/#/today');
+    const link = b.page.getByRole('link', { name: /全部待办/ });
+    await link.waitFor();
+    await link.click();
+    await b.page.waitForSelector('.task-row:has-text("未来任务")');
+    await b.page.waitForSelector('.task-row:has-text("无日期任务")');
+    assert.match(b.page.url(), /#\/tasks/, '应跳转到待办页');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('首页：笔试/面试统计点击后看到真实记录，条目可打开编辑', async () => {
+  const b = await launchBrowser();
+  try {
+    const a = (await b.api('POST', '/api/applications', {
+      company: '首页测试公司', position: '岗位X', status: '面试', next_step: '二面',
+    })).json;
+    await b.page.goto(b.baseUrl + '/#/today');
+    const link = b.page.getByRole('link', { name: /笔试\/面试/ });
+    await link.waitFor();
+    await link.click();
+    await b.page.waitForSelector('.app-card:has-text("首页测试公司")');
+    await b.page.click(`[data-app-id="${a.id}"]`);
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    assert.match(await b.page.textContent('#modal-title'), /首页测试公司/);
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('首页：待办摘要最多 5 项并有「查看全部 N 项」；笔面试明细显示下一步日期或「未安排」', async () => {
+  const b = await launchBrowser();
+  try {
+    for (let i = 1; i <= 6; i++) {
+      await b.api('POST', '/api/tasks', { title: `摘要任务${i}`, category: '生活', due_date: `2030-01-0${i}` });
+    }
+    await b.api('POST', '/api/applications', {
+      company: '无日期公司', position: '岗位N', status: '笔试', next_step: '等待安排',
+    });
+    await b.api('POST', '/api/applications', {
+      company: '有日期公司', position: '岗位D', status: '面试', next_step: '二面', next_step_date: '2026-09-25',
+    });
+    await b.page.goto(b.baseUrl + '/#/today');
+    await b.page.waitForSelector('.dash-todo .task-row');
+    const shown = await b.page.locator('.dash-todo .task-row').count();
+    assert.ok(shown <= 5, `待办摘要最多 5 项（实际 ${shown}）`);
+    const viewAll = b.page.getByRole('link', { name: /查看全部 6 项/ });
+    await viewAll.waitFor();
+    // 笔面试明细：有日期显示日期，无日期明确「未安排」
+    const detail = b.page.locator('.dash-interviews');
+    await detail.waitFor();
+    const text = await detail.textContent();
+    assert.match(text, /无日期公司/);
+    assert.match(text, /未安排/);
+    assert.match(text, /有日期公司/);
+    assert.match(text, /9月25日/);
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('首页：无今日重点时提供可用的「新增待办」按钮', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/today');
+    await b.page.waitForSelector('.dash-focus');
+    const btn = b.page.locator('.dash-focus button:has-text("新增待办")');
+    assert.equal(await btn.count(), 1, '无重点时应提供新增待办按钮');
+    await btn.click();
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    assert.equal(await b.page.textContent('#modal-title'), '新增待办');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
 /* ---------- 异步渲染竞态：旧保存回调不得覆盖新路由 ---------- */
 
 test('保存请求延迟时跳转成果页：请求完成后成果页不得被任务列表覆盖', async () => {

@@ -360,6 +360,8 @@ body.nebula-on .bg-grid { opacity: .55; }
    ============================================================ */
 .stats-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
 .stat { padding: 14px 16px; position: relative; overflow: hidden; }
+a.stat { text-decoration: none; color: inherit; display: block; }
+a.stat:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
 .stat-num {
   font-size: 27px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15;
   font-variant-numeric: tabular-nums;
@@ -463,6 +465,23 @@ body.nebula-on .bg-grid { opacity: .55; }
 
 .link { color: var(--accent-2, #818cf8); text-decoration: underline; cursor: pointer; font-size: 13px; }
 .link:hover { color: #a5b4fc; }
+
+/* 首页：快捷新增、待办摘要与笔面试明细 */
+.quick-add {
+  display: flex; gap: 10px; margin-bottom: 14px;
+}
+.dash-more { padding: 8px 4px 0; text-align: left; }
+.dash-more .link { font-weight: 600; }
+.interview-item {
+  display: block; text-decoration: none; color: inherit;
+  padding: 8px 4px; border-bottom: 1px dashed rgba(148, 163, 214, .14);
+}
+.interview-item:last-child { border-bottom: none; }
+.interview-item:hover { background: rgba(129, 140, 248, .06); }
+.interview-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.interview-company { font-weight: 600; }
+.interview-pos { color: var(--ink-2); font-size: 12.5px; }
+.interview-meta { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
 
 .filter-bar {
   display: flex; align-items: center; gap: 10px;

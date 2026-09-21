@@ -80,6 +80,11 @@ test('投递页 stage=interviewing：笔试/面试组合本地筛选，前进后
     await b.page.click('.chip[data-status=""]');
     await b.page.waitForSelector('.app-card:has-text("投递公司")');
     await b.page.goBack();
+    // 等待筛选真正恢复（面试公司在两种视图下都可见，不能作为恢复信号）
+    await b.page.waitForFunction(() => {
+      const cards = [...document.querySelectorAll('.app-card')];
+      return cards.length > 0 && !cards.some((c) => c.textContent.includes('投递公司'));
+    });
     await b.page.waitForSelector('.app-card:has-text("面试公司")');
     assert.equal(await b.page.locator('.app-card:has-text("投递公司")').count(), 0, '后退应恢复组合筛选');
     b.assertNoPageErrors();
