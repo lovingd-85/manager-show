@@ -44,11 +44,13 @@ async function api(method, path, body) {
     location.href = '/login';
     throw new Error('未登录');
   }
+  if (!res.ok) {
+    const error = await res.json().catch(() => null);
+    throw new Error((error && error.error) || `请求失败（${res.status}）`);
+  }
+  invalidateFor(method, path);   // 写操作成功后精确失效相关 GET 缓存，杜绝陈旧数据（含 204 空响应）
   if (res.status === 204) return null;
-  const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((json && json.error) || `请求失败（${res.status}）`);
-  invalidateFor(method, path);   // 写操作成功后精确失效相关 GET 缓存，杜绝陈旧数据
-  return json;
+  return res.json();
 }
 
 /* ---------- 四个 GET 数据源的内存缓存 ----------
