@@ -23,9 +23,11 @@ test('index.html：包含全部 JS 依赖的 DOM 钩子（结构契约）', () =
   // 全局容器
   for (const id of ['sidebar', 'btn-menu', 'topbar-title', 'topbar-date', 'view',
     'modal-mask', 'modal-title', 'modal-close', 'modal-form', 'toast',
-    'btn-reset-seed', 'btn-logout', 'nebula-canvas', 'bottom-nav']) {
+    'btn-logout', 'nebula-canvas', 'bottom-nav']) {
     assert.ok(html.includes(`id="${id}"`), `index.html 缺少 #${id}`);
   }
+  // 破坏性的「重置示例数据」入口已移除
+  assert.ok(!html.includes('btn-reset-seed'), 'index.html 不应再有重置示例数据按钮');
   // 四个路由导航（侧边栏 + 移动端底部导航各一份）
   for (const route of ['today', 'campus', 'tasks', 'achievements']) {
     assert.ok(html.includes(`data-route="${route}"`), `index.html 缺少导航 data-route="${route}"`);

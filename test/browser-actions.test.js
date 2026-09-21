@@ -556,6 +556,42 @@ test('同步任务：显示来源、只读、可复制为个人待办；手工�
   }
 });
 
+/* ---------- 控件审计：破坏性入口移除，保留控件真实可用 ---------- */
+
+test('手机菜单：☰ 打开侧边栏，选择导航后自动收起', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.setViewportSize({ width: 390, height: 844 });
+    await b.page.goto(b.baseUrl + '/#/today');
+    await b.page.waitForSelector('#btn-menu');
+    assert.equal(await b.page.locator('#sidebar.open').count(), 0, '初始应收起');
+    await b.page.click('#btn-menu');
+    await b.page.waitForSelector('#sidebar.open');
+    await b.page.click('.nav a[data-route="tasks"]');
+    await b.page.waitForFunction(() => !document.querySelector('#sidebar').classList.contains('open'));
+    await b.page.waitForSelector('#btn-add-task');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('重置示例数据入口已移除；退出登录仍可用', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/today');
+    await b.page.waitForSelector('#btn-logout');
+    assert.equal(await b.page.locator('#btn-reset-seed').count(), 0, '侧边栏不应再有重置示例数据按钮');
+    assert.equal(await b.page.locator('text=重置示例数据').count(), 0, '页面上不应出现重置示例数据文案');
+    // 保留的退出登录必须真实可用
+    await b.page.click('#btn-logout');
+    await b.page.waitForURL(/\/login/);
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
 /* ---------- 异步渲染竞态：旧保存回调不得覆盖新路由 ---------- */
 
 test('保存请求延迟时跳转成果页：请求完成后成果页不得被任务列表覆盖', async () => {

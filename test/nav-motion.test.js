@@ -131,6 +131,6 @@ test('写操作成功后精确失效相关缓存（不展示陈旧任务/投递�
   assert.ok(js.includes("startsWith('/api/events')"), '日程写入未失效日程缓存');
   assert.ok(js.includes("startsWith('/api/applications')"), '投递写入未失效投递缓存');
   assert.ok(js.includes("startsWith('/api/achievements')"), '成果写入未失效成果缓存');
-  assert.ok(js.includes("'/api/seed/reset'"), 'seed 重置未失效全部缓存');
+  assert.ok(!js.includes("'/api/seed/reset'"), '不应保留 seed 重置缓存失效分支');
   assert.match(js, /drop\('\/api\/dashboard'\)/, '写操作未联动失效今日首页缓存');
 });

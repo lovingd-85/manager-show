@@ -6,7 +6,8 @@ const assert = require('node:assert/strict');
 const { startServer } = require('../support/server-harness');
 
 let api, close;
-before(async () => { ({ api, close } = await startServer()); });
+// 重置示例数据接口默认关闭：本文件的重置测试需要显式开启（隔离测试实例）
+before(async () => { ({ api, close } = await startServer({ appOptions: { allowSeedReset: true } })); });
 after(() => close());
 
 test('种子数据：列表非空且包含示例公司', async () => {

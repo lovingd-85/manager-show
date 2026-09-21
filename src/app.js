@@ -40,6 +40,7 @@ function createApp(options = {}) {
     loginWindowMinutes,
     cookieSecure,
     trustProxy,
+    allowSeedReset = false,
   } = options;
 
   const db = openDb(dbPath);
@@ -502,11 +503,14 @@ function createApp(options = {}) {
     res.status(204).end();
   });
 
-  // ---------- 示例数据重置（仅登录后可用，且受 CSRF 校验保护） ----------
-  app.post('/api/seed/reset', (req, res) => {
-    const counts = seedData.reset(db);
-    res.json({ ok: true, counts });
-  });
+  // ---------- 示例数据重置（破坏性接口，默认不注册：生产无入口也不可调用） ----------
+  // 仅隔离测试/演示实例显式 allowSeedReset: true 时注册；认证与 CSRF 中间件不变。
+  if (allowSeedReset) {
+    app.post('/api/seed/reset', (req, res) => {
+      const counts = seedData.reset(db);
+      res.json({ ok: true, counts });
+    });
+  }
 
   // ---------- 页面 ----------
   // 登录页公开；首页与 index.html 仅登录后可见；静态资源不含业务数据，保持公开

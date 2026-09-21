@@ -99,6 +99,36 @@ test('未登录：所有写接口返回 401 且数据不被修改', async () => 
   assert.ok(achievements.every((a) => a.title !== '入侵成果' && a.title !== '被篡改成果'));
 });
 
+test('重置示例数据默认关闭：登录后 404；显式开启的隔离实例才可用；认证中间件不变', async () => {
+  const client = makeClient(srv.baseUrl);
+  const login = await client.req('POST', '/api/auth/login', { body: { password: PASSWORD } });
+  assert.equal(login.status, 200);
+  // 默认（未显式 allowSeedReset）：即使登录也不存在可调用的重置接口
+  const denied = await client.req('POST', '/api/seed/reset');
+  assert.equal(denied.status, 404);
+
+  // 显式开启的隔离实例：可用且真的重置
+  const demo = await startServer({ login: false, appOptions: { adminPassword: PASSWORD, allowSeedReset: true } });
+  try {
+    const dClient = makeClient(demo.baseUrl);
+    // 未登录：认证中间件不变，仍是 401
+    const unauth = await dClient.req('POST', '/api/seed/reset');
+    assert.equal(unauth.status, 401);
+    // 登录后：可调用，且清空手工数据重灌种子
+    const dLogin = await dClient.req('POST', '/api/auth/login', { body: { password: PASSWORD } });
+    assert.equal(dLogin.status, 200);
+    const created = (await dClient.req('POST', '/api/tasks', { body: { title: '重置前任务', category: '生活' } })).json;
+    assert.ok(created.id);
+    const reset = await dClient.req('POST', '/api/seed/reset');
+    assert.equal(reset.status, 200);
+    assert.ok(reset.json.counts.applications >= 5);
+    const tasks = (await dClient.req('GET', '/api/tasks')).json;
+    assert.ok(tasks.every((t) => t.title !== '重置前任务'), '重置应清空手工数据');
+  } finally {
+    await demo.close();
+  }
+});
+
 test('页面保护：未登录跳转登录页；登录页、静态资源、健康检查公开', async () => {
   const client = makeClient(srv.baseUrl);
 

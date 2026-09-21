@@ -127,7 +127,6 @@ function invalidateFor(method, path) {
   if (base.startsWith('/api/events')) { drop('/api/events'); drop('/api/dashboard'); return; }
   if (base.startsWith('/api/applications')) { drop('/api/applications'); drop('/api/dashboard'); return; }
   if (base.startsWith('/api/achievements')) { drop('/api/achievements'); drop('/api/dashboard'); return; }
-  if (base === '/api/seed/reset') { drop('/api/'); return; }
 }
 
 /* ---------- 导航动效 ---------- */
@@ -1022,14 +1021,6 @@ function initChrome() {
   const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
   $('#topbar-date').textContent = `${greet} · ${Number(m)} 月 ${Number(day)} 日 · 星期${week}`;
   $('#btn-menu').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
-  $('#btn-reset-seed').addEventListener('click', async () => {
-    if (!confirm('将清空全部数据并恢复示例数据，确定吗？')) return;
-    try {
-      await api('POST', '/api/seed/reset');
-      toast('已恢复示例数据');
-      route();
-    } catch (err) { toast(err.message, true); }
-  });
   $('#btn-logout').addEventListener('click', async () => {
     try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略网络错误 */ }
     location.href = '/login';
