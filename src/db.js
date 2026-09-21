@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS reminders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('task','event')),
+  entity_key TEXT NOT NULL,
+  remind_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled'
+    CHECK(status IN ('scheduled','unread','read','cancelled')),
+  created_at TEXT NOT NULL,
+  triggered_at TEXT,
+  read_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS reminders_due ON reminders(status, remind_at);
+CREATE UNIQUE INDEX IF NOT EXISTS reminders_active_entity
+  ON reminders(entity_type, entity_key) WHERE status IN ('scheduled','unread');
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
