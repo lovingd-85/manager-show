@@ -13,6 +13,7 @@ const { todayLocal, addDays, isValidDate, nowIso } = require('./dates');
 const v = require('./validate');
 const auth = require('./auth');
 const { createRateLimiter } = require('./rate-limit');
+const { createHermesChat, createChatLimiter } = require('./hermes-chat');
 const {
   ACTIVE_STATUSES,
   withTransaction,
@@ -54,6 +55,11 @@ function createApp(options = {}) {
     allowSeedReset = false,
     // 提醒相关时间计算使用可注入时钟（测试无需真等时间）；默认真实时间
     now = nowIso,
+    // Hermes 同源聊天代理：上游地址与凭据（服务端持有；缺省 key 则路由一律 503，不编造连通性）
+    hermesBaseUrl,
+    hermesApiKey,
+    chatMaxPerMinute,
+    chatMaxConcurrent,
   } = options;
 
   const db = openDb(dbPath);
@@ -80,6 +86,15 @@ function createApp(options = {}) {
     windowMs: (loginWindowMinutes ?? envNumber('LOGIN_WINDOW_MINUTES', 15)) * 60_000,
   });
   const secureCookie = cookieSecure ?? !['0', 'false'].includes(String(process.env.COOKIE_SECURE || '').toLowerCase());
+
+  const chat = createHermesChat({
+    baseUrl: hermesBaseUrl ?? process.env.HERMES_API_BASE_URL,
+    apiKey: hermesApiKey ?? process.env.HERMES_API_KEY,
+  });
+  const chatLimiter = createChatLimiter({
+    maxPerMinute: chatMaxPerMinute ?? 10,
+    maxConcurrent: chatMaxConcurrent ?? 1,
+  });
 
   const app = express();
   app.disable('x-powered-by');
@@ -631,6 +646,92 @@ function createApp(options = {}) {
     db.prepare('UPDATE reminders SET remind_at=?, status=?, read_at=? WHERE id=?')
       .run(remindAt, status, readAt, row.id);
     res.json(serializeReminder(db.prepare('SELECT * FROM reminders WHERE id = ?').get(row.id)));
+  });
+
+  // ---------- Hermes 聊天（同源受保护代理；不直连模型、不假回复、不注入 DB 内容） ----------
+  // 上游错误统一 502 并透传错误信息；凭据问题不外泄细节
+  const chatUpstreamError = (res, err) => {
+    res.status(502).json({ error: `聊天服务调用失败：${err && err.message ? err.message : '上游不可用'}` });
+  };
+
+  // 创建独立 Manager Show 会话：先在上游建成（避免本地留僵尸映射），再落库本地 id
+  app.post('/api/chat/conversation', async (req, res, next) => {
+    if (!chat.configured()) return res.status(503).json({ error: '聊天服务未配置（上游未启用），请稍后再试' });
+    const raw = typeof (req.body || {}).title === 'string' ? req.body.title.trim().slice(0, 100) : '';
+    const title = raw || 'Manager Show 会话';
+    try {
+      const upstreamId = await chat.createConversation({ title });
+      const createdAt = now();
+      const info = db.prepare(
+        'INSERT INTO hermes_conversations (upstream_session_id, title, created_at) VALUES (?, ?, ?)'
+      ).run(upstreamId, title, createdAt);
+      res.status(201).json({ id: info.lastInsertRowid, title, created_at: createdAt });
+    } catch (err) {
+      if (err && err.status) return chatUpstreamError(res, err);
+      next(err);
+    }
+  });
+
+  app.get('/api/chat/conversations', (req, res) => {
+    const rows = db.prepare(
+      'SELECT id, title, created_at FROM hermes_conversations ORDER BY id DESC'
+    ).all();
+    res.json(rows);
+  });
+
+  const findConversation = (req, res) => {
+    const conv = db.prepare('SELECT * FROM hermes_conversations WHERE id = ?').get(req.params.id);
+    if (!conv) { notFound(res, '会话'); return null; }
+    return conv;
+  };
+
+  // 发送消息：幂等 requestId（已完成的重放返回同一次结果，不重复触发上游，也不占限流配额）
+  app.post('/api/chat/conversation/:id/messages', async (req, res, next) => {
+    if (!chat.configured()) return res.status(503).json({ error: '聊天服务未配置（上游未启用），请稍后再试' });
+    const conv = findConversation(req, res);
+    if (!conv) return;
+    const body = req.body || {};
+    const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : '';
+    if (!requestId) return bad(res, 'requestId 必填（幂等键）');
+    if (requestId.length > 100) return bad(res, 'requestId 过长（最多 100 字符）');
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!message) return bad(res, 'message 不能为空');
+    if (message.length > 4000) return bad(res, '消息过长（最多 4000 字）');
+
+    const cached = db.prepare('SELECT * FROM hermes_requests WHERE request_id = ?').get(requestId);
+    if (cached) return res.json({ id: cached.request_id, reply: cached.reply, replayed: true });
+
+    const ticket = chatLimiter.tryAcquire();
+    if (!ticket.ok) {
+      return res.status(429)
+        .set('Retry-After', ticket.reason === 'rate' ? '60' : '2')
+        .json({ error: ticket.reason === 'rate' ? '聊天过于频繁，请稍后再试' : '聊天处理中，请稍后再试' });
+    }
+    try {
+      const { reply, usage } = await chat.sendMessage(conv.upstream_session_id, message);
+      db.prepare(
+        'INSERT INTO hermes_requests (request_id, conversation_id, message, reply, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).run(requestId, conv.id, message, reply, now());
+      res.json({ id: requestId, reply, replayed: false, usage });
+    } catch (err) {
+      if (err && err.status) return chatUpstreamError(res, err);
+      next(err);
+    } finally {
+      ticket.release();
+    }
+  });
+
+  // 读回会话消息（上游存储为准；本地只缓存幂等回复）
+  app.get('/api/chat/conversation/:id/messages', async (req, res, next) => {
+    if (!chat.configured()) return res.status(503).json({ error: '聊天服务未配置（上游未启用），请稍后再试' });
+    const conv = findConversation(req, res);
+    if (!conv) return;
+    try {
+      res.json(await chat.listMessages(conv.upstream_session_id));
+    } catch (err) {
+      if (err && err.status) return chatUpstreamError(res, err);
+      next(err);
+    }
   });
 
   // ---------- 示例数据重置（破坏性接口，默认不注册：生产无入口也不可调用） ----------

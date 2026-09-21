@@ -78,6 +78,22 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS hermes_conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  upstream_session_id TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+-- 幂等键缓存：仅记录已完成的上游回复；失败不落库，同 requestId 重试可再触发上游
+CREATE TABLE IF NOT EXISTS hermes_requests (
+  request_id TEXT PRIMARY KEY,
+  conversation_id INTEGER NOT NULL,
+  message TEXT NOT NULL,
+  reply TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 function openDb(dbPath) {
