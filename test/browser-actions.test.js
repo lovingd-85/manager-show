@@ -231,23 +231,17 @@ test('投递页：搜索与状态筛选真实过滤列表', async () => {
         && !document.querySelector('.board').textContent.includes('无关公司');
     });
 
-    // 状态筛选：点「Offer」chip → 其他泳道为空（当前无 Offer 记录）
+    // 状态筛选：点「Offer」chip → URL 驱动筛选视图，只显示筛选结果（当前无 Offer 记录 → 原因与清除入口）
     await b.page.fill('#campus-q', '');
     await b.page.waitForFunction(() => !document.querySelector('#campus-q').value);
     await b.page.click('.chip[data-status="Offer"]');
-    await b.page.waitForFunction(() => {
-      const offer = document.querySelector('.lane[data-status="Offer"] .lane-cards');
-      const interview = document.querySelector('.lane[data-status="面试"] .lane-cards');
-      return offer && interview && offer.textContent.includes('暂无记录')
-        && !interview.textContent.includes('搜索目标公司');
-    });
+    await b.page.waitForSelector('.filter-empty');
+    assert.match(await b.page.textContent('#view'), /没有符合「Offer」筛选的记录/);
+    assert.equal(await b.page.locator('.app-card').count(), 0, '筛选视图不应保留其他记录卡片');
 
-    // 清空筛选：恢复全部
-    await b.page.click('.chip[data-status=""]');
-    await b.page.waitForFunction(() => {
-      const interview = document.querySelector('.lane[data-status="面试"] .lane-cards');
-      return interview && interview.textContent.includes('搜索目标公司');
-    });
+    // 清除筛选：恢复全部
+    await b.page.click('#clear-filter');
+    await b.page.waitForSelector('.app-card:has-text("搜索目标公司")');
     b.assertNoPageErrors();
   } finally {
     await b.close();

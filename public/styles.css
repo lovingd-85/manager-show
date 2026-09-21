@@ -458,7 +458,22 @@ body.nebula-on .bg-grid { opacity: .55; }
   box-shadow: 0 0 0 3px var(--ring);
 }
 
-.chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip-sep { color: var(--ink-3); font-size: 12.5px; margin-left: 4px; }
+
+.link { color: var(--accent-2, #818cf8); text-decoration: underline; cursor: pointer; font-size: 13px; }
+.link:hover { color: #a5b4fc; }
+
+.filter-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; margin-bottom: 12px;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: rgba(255, 255, 255, .03);
+  font-size: 13px; color: var(--ink-2);
+}
+.filter-empty { text-align: center; padding: 34px 18px; }
+.empty-sub { color: var(--ink-3); font-size: 12.5px; margin-top: 8px; }
+.lane-located { margin-left: auto; font-size: 12px; color: var(--ink-3); }
 .chip {
   border: 1px solid var(--line-2); background: rgba(255, 255, 255, .05);
   color: var(--ink-2);

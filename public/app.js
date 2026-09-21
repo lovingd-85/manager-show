@@ -339,53 +339,142 @@ function bindTaskToggles(root, refresh) {
 }
 
 /* ---------- 视图：校招投递 ---------- */
-const campusState = { status: '', q: '' };
+const campusState = { q: '' };   // 搜索词保留在本地（不进入 URL）；状态筛选由 URL 驱动
 
-async function renderCampus() {
-  const params = new URLSearchParams();
-  if (campusState.status) params.set('status', campusState.status);
-  if (campusState.q) params.set('q', campusState.q);
-  const apps = await apiGet('/api/applications?' + params.toString());
-
-  const box = document.createElement('div');
-  box.innerHTML = `
+// 按当前 URL 参数构建「新增投递」等工具栏，状态筛选芯片写入 hash（可分享/可前进后退）
+function campusToolbar(params, q) {
+  const urlStatus = APP_STATUSES.includes(params.get('status')) ? params.get('status') : '';
+  const urlStage = params.get('stage') === 'interviewing' ? 'interviewing' : '';
+  return `
     <div class="toolbar">
-      <input type="search" id="campus-q" placeholder="搜索公司 / 岗位…" value="${esc(campusState.q)}" />
+      <input type="search" id="campus-q" placeholder="搜索公司 / 岗位…" value="${esc(q)}" />
       <div class="chip-row">
-        <button class="chip ${campusState.status === '' ? 'active' : ''}" data-status="">全部</button>
-        ${APP_STATUSES.map((s) => `<button class="chip ${campusState.status === s ? 'active' : ''}" data-status="${s}">${s}</button>`).join('')}
+        <button class="chip ${!urlStatus && !urlStage ? 'active' : ''}" data-status="">全部</button>
+        <button class="chip ${urlStage ? 'active' : ''}" data-stage="interviewing">笔试/面试</button>
+        ${APP_STATUSES.map((s) => `<button class="chip ${urlStatus === s ? 'active' : ''}" data-status="${s}">${s}</button>`).join('')}
       </div>
       <button class="btn btn-primary" id="btn-add-app" style="margin-left:auto">＋ 新增投递</button>
-    </div>
-    <div class="board">
-      ${APP_STATUSES.map((s) => {
-        const list = apps.filter((a) => a.status === s);
-        return `
-          <div class="lane" data-status="${s}">
-            <div class="lane-head"><span class="lane-dot" aria-hidden="true"></span><span class="badge ${STATUS_BADGE[s]}">${s}</span>
-              <span class="lane-count">${list.length}</span></div>
-            <div class="lane-cards">
-              ${list.length === 0 ? '<div class="lane-empty">暂无记录</div>' : ''}
-              ${list.map(appCard).join('')}
-            </div>
-          </div>`;
-      }).join('')}
     </div>`;
+}
 
+async function renderCampus(urlParams = new URLSearchParams()) {
+  const urlStatus = APP_STATUSES.includes(urlParams.get('status')) ? urlParams.get('status') : '';
+  const urlStage = urlParams.get('stage') === 'interviewing' ? 'interviewing' : '';
+  const rawId = urlParams.get('id');
+  const idNum = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
+
+  // id 深链：定位单条记录（非法 id 不请求；不存在则说明原因而非空白）
+  if (idNum !== null) {
+    let a;
+    try {
+      a = await apiGet('/api/applications/' + idNum);
+    } catch (err) {
+      if (/不存在/.test(err.message)) {
+        return campusNotFound(idNum);
+      }
+      throw err;
+    }
+    const box = document.createElement('div');
+    box.innerHTML = campusToolbar(urlParams, campusState.q) + `
+      <div class="board">
+        <div class="lane" data-status="${a.status}">
+          <div class="lane-head"><span class="lane-dot" aria-hidden="true"></span><span class="badge ${STATUS_BADGE[a.status]}">${a.status}</span>
+            <span class="lane-count">1</span><span class="lane-located">已定位到该记录</span></div>
+          <div class="lane-cards">${appCard(a)}</div>
+        </div>
+      </div>`;
+    bindCampusControls(box, urlParams, [a]);
+    if (deepLinkId === String(a.id)) openAppModal(a);
+    return box;
+  }
+
+  // 组合筛选（stage / stage+status）：后端不支持「笔试,面试」组合，从全部记录本地筛选
+  const qp = new URLSearchParams();
+  if (campusState.q) qp.set('q', campusState.q);
+  if (urlStatus && !urlStage) qp.set('status', urlStatus);
+  let apps = await apiGet('/api/applications?' + qp.toString());
+  let filterLabel = '';
+  if (urlStage) {
+    apps = apps.filter((a) => a.status === '笔试' || a.status === '面试');
+    filterLabel = '笔试/面试';
+    if (urlStatus) {
+      apps = apps.filter((a) => a.status === urlStatus);
+      filterLabel = `笔试/面试 · ${urlStatus}`;
+    }
+  } else if (urlStatus) {
+    filterLabel = urlStatus;
+  }
+
+  const box = document.createElement('div');
+  if (filterLabel) {
+    // 有筛选：只展示筛选结果（不展示其他空列），空结果给出原因与清除筛选
+    box.innerHTML = campusToolbar(urlParams, campusState.q) + `
+      <div class="filter-bar">
+        <span>已筛选：<span class="badge b-violet">${esc(filterLabel)}</span></span>
+        <a href="#/campus" class="link" id="clear-filter">清除筛选</a>
+      </div>
+      ${apps.length === 0 ? `
+        <div class="card panel empty filter-empty">
+          <span class="empty-glyph">◌</span>
+          <p>没有符合「${esc(filterLabel)}」筛选的记录</p>
+          <p class="empty-sub">可调整筛选条件，或 <a href="#/campus" class="link">清除筛选</a> 查看全部记录</p>
+        </div>` : `
+        <div class="board">
+          <div class="lane" data-status="filtered">
+            <div class="lane-head"><span class="lane-dot" aria-hidden="true"></span><span class="badge b-violet">${esc(filterLabel)}</span>
+              <span class="lane-count">${apps.length}</span></div>
+            <div class="lane-cards">${apps.map(appCard).join('')}</div>
+          </div>
+        </div>`}`;
+  } else {
+    box.innerHTML = campusToolbar(urlParams, campusState.q) + `
+      <div class="board">
+        ${APP_STATUSES.map((s) => {
+          const list = apps.filter((a) => a.status === s);
+          return `
+            <div class="lane" data-status="${s}">
+              <div class="lane-head"><span class="lane-dot" aria-hidden="true"></span><span class="badge ${STATUS_BADGE[s]}">${s}</span>
+                <span class="lane-count">${list.length}</span></div>
+              <div class="lane-cards">
+                ${list.length === 0 ? '<div class="lane-empty">暂无记录</div>' : ''}
+                ${list.map(appCard).join('')}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+  bindCampusControls(box, urlParams, apps);
+  return box;
+}
+
+function campusNotFound(idNum) {
+  const box = document.createElement('div');
+  box.innerHTML = `
+    <div class="card panel empty">
+      <span class="empty-glyph">◌</span>
+      <p>事项已更新或删除（未找到投递记录 #${esc(idNum)}）</p>
+      <p class="empty-sub"><a href="#/campus" class="link">返回全部投递</a></p>
+    </div>`;
+  return box;
+}
+
+function bindCampusControls(box, urlParams, apps) {
   $('#campus-q', box).addEventListener('input', debounce((e) => {
     campusState.q = e.target.value;
     rerender(currentRender());
   }, 350));
   box.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
-    campusState.status = c.dataset.status;
-    rerender(currentRender());
+    if (c.dataset.stage) {
+      navigateWithParams('campus', { stage: 'interviewing', status: '', id: '' });
+    } else {
+      navigateWithParams('campus', { status: c.dataset.status, stage: '', id: '' });
+    }
   }));
   $('#btn-add-app', box).addEventListener('click', () => openAppModal(null));
   box.querySelectorAll('[data-app-id]').forEach((card) => card.addEventListener('click', () => {
     const a = apps.find((x) => x.id === Number(card.dataset.appId));
     if (a) openAppModal(a);
   }));
-  return box;
 }
 
 function appCard(a) {
@@ -448,26 +537,87 @@ function debounce(fn, ms) {
 }
 
 /* ---------- 视图：任务日程 ---------- */
-async function renderTasks() {
+async function renderTasks(urlParams = new URLSearchParams()) {
   const today = todayStr();
-  const [tasks, events] = await Promise.all([
-    apiGet('/api/tasks'),
+  const urlState = ['open', 'done', 'all'].includes(urlParams.get('state')) ? urlParams.get('state') : 'open';
+  const rawCategory = urlParams.get('category');
+  const urlCategory = TASK_CATEGORIES.includes(rawCategory) ? rawCategory : '';
+  const rawId = urlParams.get('id');
+  const idNum = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
+
+  // id 深链：定位单条记录（非法 id 不请求；不存在则说明原因而非空白）
+  if (idNum !== null) {
+    let t;
+    try {
+      t = await apiGet('/api/tasks/' + idNum);
+    } catch (err) {
+      if (/不存在/.test(err.message)) {
+        return taskNotFound(idNum);
+      }
+      throw err;
+    }
+    const box = await buildTasksView({ today, tasks: [t], events: [], urlState, urlCategory, locatedTask: t, title: '✓ 已定位事项' });
+    if (deepLinkId === String(t.id)) openTaskModal(t);
+    return box;
+  }
+
+  let tasks = await apiGet('/api/tasks');
+  const [events] = await Promise.all([
     apiGet('/api/events?from=' + addDaysStr(today, -7) + '&to=' + addDaysStr(today, 30)),
   ]);
+  if (urlCategory) tasks = tasks.filter((t) => t.category === urlCategory);
+  return buildTasksView({ today, tasks, events, urlState, urlCategory, locatedTask: null, title: null });
+}
 
-  const groups = [
+function taskNotFound(idNum) {
+  const box = document.createElement('div');
+  box.innerHTML = `
+    <div class="card panel empty">
+      <span class="empty-glyph">◌</span>
+      <p>事项已更新或删除（未找到任务 #${esc(idNum)}）</p>
+      <p class="empty-sub"><a href="#/tasks" class="link">返回全部待办</a></p>
+    </div>`;
+  return box;
+}
+
+async function buildTasksView({ today, tasks, events, urlState, urlCategory, locatedTask, title }) {
+  const openGroups = [
     ['已逾期', tasks.filter((t) => !t.done && t.due_date && t.due_date < today), 'b-red'],
     ['今天截止', tasks.filter((t) => !t.done && t.due_date === today), 'b-accent'],
     ['即将截止', tasks.filter((t) => !t.done && t.due_date && t.due_date > today), 'b-blue'],
     ['无截止日期', tasks.filter((t) => !t.done && !t.due_date), 'b-gray'],
-    ['已完成', tasks.filter((t) => t.done), 'b-green'],
   ];
+  const doneGroup = ['已完成', tasks.filter((t) => t.done), 'b-green'];
+  const groups = urlState === 'done' ? [doneGroup]
+    : urlState === 'all' ? [...openGroups, doneGroup]
+      : openGroups;
+
+  const openCount = tasks.filter((t) => !t.done).length;
+  const countLabel = urlState === 'done'
+    ? `${tasks.filter((t) => t.done).length} 项已完成`
+    : urlState === 'all'
+      ? `共 ${tasks.length} 项 · ${openCount} 项待办`
+      : `${openCount} 项待办`;
+  const emptyReason = urlState === 'done'
+    ? '没有已完成的待办，完成一项后这里会出现记录'
+    : urlState === 'all'
+      ? '还没有任何待办，用上面的表单添加第一条'
+      : '没有未完成的待办，太棒了！';
+  const visible = groups.flatMap(([, list]) => list);
 
   const box = document.createElement('div');
   box.innerHTML = `
     <div class="two-col">
       <section class="card panel">
-        <h3 class="section-title">✓ 任务清单 <span class="count">${tasks.filter((t) => !t.done).length} 项待办</span></h3>
+        <h3 class="section-title">${esc(title || '✓ 任务清单')} <span class="count">${esc(countLabel)}</span></h3>
+        <div class="chip-row task-filters">
+          <button class="chip ${urlState === 'open' ? 'active' : ''}" data-state="open">未完成</button>
+          <button class="chip ${urlState === 'all' ? 'active' : ''}" data-state="all">全部</button>
+          <button class="chip ${urlState === 'done' ? 'active' : ''}" data-state="done">已完成</button>
+          <span class="chip-sep">· 分类：</span>
+          <button class="chip ${urlCategory === '' ? 'active' : ''}" data-category="">全部</button>
+          ${TASK_CATEGORIES.map((c) => `<button class="chip ${urlCategory === c ? 'active' : ''}" data-category="${c}">${c}</button>`).join('')}
+        </div>
         <form class="inline-form" id="form-add-task">
           <input class="grow" name="title" placeholder="新任务标题…" required />
           <input name="due_date" type="date" />
@@ -477,6 +627,7 @@ async function renderTasks() {
         <label style="font-size:12px;color:var(--ink-3);display:flex;gap:6px;align-items:center;margin:6px 2px 0">
           <input type="checkbox" id="add-task-focus" /> 同时标记为今日重点
         </label>
+        ${visible.length === 0 ? `<div class="empty"><span class="empty-glyph">✓</span><p>${esc(emptyReason)}</p></div>` : ''}
         ${groups.map(([name, list, badge]) => list.length === 0 ? '' : `
           <div class="task-group">
             <div class="task-group-title"><span class="badge ${badge}">${name}</span>${list.length} 项</div>
@@ -532,6 +683,14 @@ async function renderTasks() {
       rerender(currentRender());
     } catch (err) { toast(err.message, true); }
   });
+
+  box.querySelectorAll('.task-filters .chip').forEach((c) => c.addEventListener('click', () => {
+    if (c.dataset.state !== undefined) {
+      navigateWithParams('tasks', { state: c.dataset.state, id: '' });
+    } else {
+      navigateWithParams('tasks', { category: c.dataset.category, id: '' });
+    }
+  }));
 
   bindTaskToggles(box, () => rerender(currentRender()));
   box.querySelectorAll('[data-task-edit]').forEach((b) => b.addEventListener('click', () => {
@@ -709,12 +868,31 @@ const ROUTES = {
   achievements: { title: '成果记录', render: renderAchievements },
 };
 
+// hash → { key, params }：#/campus?stage=interviewing → { key:'campus', params:… }
+function parseRoute(hash) {
+  const [raw, query = ''] = hash.replace(/^#\/?/, '').split('?');
+  return { key: raw || 'today', params: new URLSearchParams(query) };
+}
+
+// 更新当前路由的查询参数（保留其余参数；值为空则删除），筛选状态写入 URL 可分享/可前进后退
+function navigateWithParams(key, updates) {
+  const { params } = parseRoute(location.hash);
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === '' || v === null || v === undefined) params.delete(k);
+    else params.set(k, v);
+  }
+  const qs = params.toString();
+  location.hash = '#/' + key + (qs ? '?' + qs : '');
+}
+
 let navSeq = 0;
+let deepLinkId = null;   // 本次路由进入时的 id 深链（只消费一次，rerender 不重复打开弹窗）
 
 // 当前路由的渲染函数：保存/删除后的刷新跟随当前路由，避免旧回调把视图拖回别的页面
 function currentRender() {
-  const key = (location.hash.replace('#/', '') || 'today');
-  return (ROUTES[key] || ROUTES.today).render;
+  const { key, params } = parseRoute(location.hash);
+  const r = ROUTES[key] || ROUTES.today;
+  return () => r.render(params);
 }
 
 // 用户是否正在编辑视图内的表单（弹窗打开，或焦点在 #view 内的表单控件上）
@@ -725,9 +903,10 @@ function viewBeingEdited() {
 }
 
 async function route() {
-  const key = (location.hash.replace('#/', '') || 'today');
+  const { key, params } = parseRoute(location.hash);
   const r = ROUTES[key] || ROUTES.today;
   const seq = ++navSeq;
+  deepLinkId = params.get('id');   // 供视图消费：id 深链只在本路由入口打开一次
   $('#topbar-title').textContent = r.title;
   // 侧边栏与移动端底部导航共用路由表，同步高亮
   document.querySelectorAll('.nav a, .bottom-nav a').forEach((a) => {
@@ -751,7 +930,7 @@ async function route() {
 
   let html;
   try {
-    html = await r.render();   // 缓存命中即秒开；未命中期间旧内容仍在，无闪白
+    html = await r.render(params);   // 缓存命中即秒开；未命中期间旧内容仍在，无闪白
   } catch (err) {
     html = `<div class="card panel empty">加载失败：${esc(err.message)}</div>`;
   }
@@ -760,6 +939,7 @@ async function route() {
   await exitDone;
   if (seq !== navSeq) return;
 
+  deepLinkId = null;   // 深链已消费（或视图无 id 处理）
   view.classList.remove('view-leaving');
   mountView(html);
   if (!instant) {
