@@ -31,6 +31,21 @@ test('任务：创建校验与完成切换', async () => {
   assert.equal(badDate.status, 400);
 });
 
+test('任务：生活任务无需 application id，自定义分类原样透传（回归）', async () => {
+  // 无日期、无 application_id 的生活任务可创建
+  const life = (await api('POST', '/api/tasks', { title: '买菜', category: '生活' })).json;
+  assert.equal(life.category, '生活');
+  assert.equal(life.due_date, '');
+  assert.equal(life.done, false);
+
+  // 自定义分类（不在前端预设列表）经 PATCH 往返原样保留，不被服务端改写
+  const custom = (await api('POST', '/api/tasks', { title: '临时分类', category: '临时' })).json;
+  const patched = (await api('PATCH', `/api/tasks/${custom.id}`, { title: '临时分类改' })).json;
+  assert.equal(patched.category, '临时');
+  const fetched = (await api('GET', `/api/tasks/${custom.id}`)).json;
+  assert.equal(fetched.category, '临时');
+});
+
 test('任务：今日重点标记（focus_date）', async () => {
   const t = (await api('POST', '/api/tasks', { title: '重点测试', focus_date: localToday() })).json;
   assert.equal(t.focus_date, localToday());

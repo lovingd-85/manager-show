@@ -36,14 +36,15 @@ test('校招投递页：点击「新增投递」打开弹窗（事件挂载不�
 
 /* ---------- 任务：快捷新增 → 真实 POST → 行可见 ---------- */
 
-test('任务页：快捷表单新增任务 → 真实 POST → 行可见', async () => {
+test('任务页：新增按钮 → 真实 POST → 行可见', async () => {
   const b = await launchBrowser();
   try {
     await b.page.goto(b.baseUrl + '/#/tasks');
-    await b.page.waitForSelector('#form-add-task');
-    await b.page.fill('#form-add-task [name="title"]', '买菜');
-    await b.page.selectOption('#form-add-task [name="category"]', '生活');
-    await b.page.click('#form-add-task button[type="submit"]');
+    await b.page.waitForSelector('#btn-add-task');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.fill('#mf-title', '买菜');
+    await b.page.click('#modal-form button[type="submit"]');
     await b.page.waitForSelector('.task-row:has-text("买菜")');
     // 服务端确认真实写入
     const tasks = (await b.api('GET', '/api/tasks')).json;
@@ -250,11 +251,11 @@ test('投递页：搜索与状态筛选真实过滤列表', async () => {
 
 /* ---------- 网络失败：保留输入、展示错误、不假成功 ---------- */
 
-test('网络失败：新增任务 500 → 保留输入并展示错误，不出现假行', async () => {
+test('网络失败：新增任务 500 → 弹窗保留输入并展示错误，不出现假行', async () => {
   const b = await launchBrowser();
   try {
     await b.page.goto(b.baseUrl + '/#/tasks');
-    await b.page.waitForSelector('#form-add-task');
+    await b.page.waitForSelector('#btn-add-task');
     await b.page.route('**/api/tasks', async (route) => {
       if (route.request().method() === 'POST') {
         await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: '服务器内部错误' }) });
@@ -262,11 +263,13 @@ test('网络失败：新增任务 500 → 保留输入并展示错误，不出�
         await route.continue();
       }
     });
-    await b.page.fill('#form-add-task [name="title"]', '会失败的任务');
-    await b.page.click('#form-add-task button[type="submit"]');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.fill('#mf-title', '会失败的任务');
+    await b.page.click('#modal-form button[type="submit"]');
     await b.page.waitForSelector('#toast:not([hidden])');
     assert.match(await b.page.textContent('#toast'), /服务器内部错误/);
-    assert.ok(await b.page.inputValue('#form-add-task [name="title"]') === '会失败的任务', '输入应保留');
+    assert.equal(await b.page.inputValue('#mf-title'), '会失败的任务', '弹窗应保持打开且输入保留');
     assert.equal(await b.page.locator('.task-row:has-text("会失败的任务")').count(), 0, '不应出现假行');
     b.assertNoPageErrors();
   } finally {
@@ -278,11 +281,13 @@ test('重复提交防护：一次表单提交只触发一次 POST（无重复监
   const b = await launchBrowser();
   try {
     await b.page.goto(b.baseUrl + '/#/tasks');
-    await b.page.waitForSelector('#form-add-task');
+    await b.page.waitForSelector('#btn-add-task');
     let postCount = 0;
     b.page.on('request', (r) => { if (r.method() === 'POST' && r.url().endsWith('/api/tasks')) postCount++; });
-    await b.page.fill('#form-add-task [name="title"]', '单次提交');
-    await b.page.click('#form-add-task button[type="submit"]');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.fill('#mf-title', '单次提交');
+    await b.page.click('#modal-form button[type="submit"]');
     await b.page.waitForSelector('.task-row:has-text("单次提交")');
     await b.page.waitForTimeout(500);
     assert.equal(postCount, 1, '一次提交只能产生一个 POST 请求');
@@ -382,6 +387,96 @@ test('首页：无今日重点时提供可用的「新增待办」按钮', async
   }
 });
 
+/* ---------- 通用待办：默认生活分类、允许无日期、自定义分类保留 ---------- */
+
+test('新增待办：默认分类生活、允许无截止日期；首页与任务页共用同一表单', async () => {
+  const b = await launchBrowser();
+  try {
+    // 任务页「新增待办」按钮 → 弹窗表单
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector('#btn-add-task');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    assert.equal(await b.page.textContent('#modal-title'), '新增待办');
+    assert.equal(await b.page.inputValue('#mf-category'), '生活', '新增默认分类应为生活');
+    assert.equal(await b.page.inputValue('#mf-due_date'), '', '应允许无截止日期');
+    assert.equal(await b.page.inputValue('#mf-focus_date'), '', '默认不应设为今日重点');
+    await b.page.fill('#mf-title', '买菜');
+    await b.page.click('#modal-form button[type="submit"]');
+    await b.page.waitForSelector('.task-row:has-text("买菜")');
+    await b.page.waitForFunction(() => document.querySelector('#modal-mask').hidden);
+    const tasks = (await b.api('GET', '/api/tasks')).json;
+    const row = tasks.find((t) => t.title === '买菜');
+    assert.equal(row.category, '生活');
+    assert.equal(row.due_date, '');
+    // 重载仍在
+    await b.page.reload();
+    await b.page.waitForSelector('.task-row:has-text("买菜")');
+    // 首页快捷新增走同一表单：新增后任务页可见
+    await b.page.goto(b.baseUrl + '/#/today');
+    await b.page.waitForSelector('#btn-quick-task');
+    await b.page.click('#btn-quick-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    assert.equal(await b.page.textContent('#modal-title'), '新增待办');
+    await b.page.fill('#mf-title', '遛狗');
+    await b.page.click('#modal-form button[type="submit"]');
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector('.task-row:has-text("遛狗")');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('学习任务：新增、完成、重载后仍在已完成列表', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.fill('#mf-title', '学英语');
+    await b.page.selectOption('#mf-category', '学习');
+    await b.page.click('#modal-form button[type="submit"]');
+    await b.page.waitForSelector('.task-row:has-text("学英语")');
+    // 完成 → 移出未完成
+    await b.page.click('.task-row:has-text("学英语") [data-task-toggle]');
+    await b.page.waitForFunction(() =>
+      ![...document.querySelectorAll('.task-row')].some((r) => r.textContent.includes('学英语')));
+    // 已完成筛选内可见，重载后仍保持
+    await b.page.click('.task-filters .chip[data-state="done"]');
+    await b.page.waitForSelector('.task-row:has-text("学英语")');
+    await b.page.reload();
+    await b.page.waitForSelector('.task-row:has-text("学英语")');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('编辑任务：自定义分类不在预设列表时保留现值', async () => {
+  const b = await launchBrowser();
+  try {
+    const t = (await b.api('POST', '/api/tasks', { title: '临时分类任务', category: '临时' })).json;
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector(`[data-task-edit="${t.id}"]`);
+    await b.page.click(`[data-task-edit="${t.id}"]`);
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    const sel = b.page.locator('#mf-category');
+    assert.equal(await sel.inputValue(), '临时', '编辑时应选中自定义分类现值');
+    assert.equal(await sel.locator('option[value="临时"]').count(), 1, 'select 应补入自定义分类选项');
+    // 不做修改直接保存：分类不得悄悄变成默认值
+    await b.page.click('#modal-form button[type="submit"]');
+    await b.page.waitForFunction(() => document.querySelector('#modal-mask').hidden);
+    const after = (await b.api('GET', `/api/tasks/${t.id}`)).json;
+    assert.equal(after.category, '临时', '保存后自定义分类应原样保留');
+    await b.page.reload();
+    await b.page.waitForSelector('.task-row:has-text("临时分类任务")');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
 /* ---------- 异步渲染竞态：旧保存回调不得覆盖新路由 ---------- */
 
 test('保存请求延迟时跳转成果页：请求完成后成果页不得被任务列表覆盖', async () => {
@@ -455,7 +550,7 @@ test('缓存过期后台刷新成功：停留在当前视图时更新内容；�
     await b.page.evaluate(() => rerender(renderTasks));
     await b.page.waitForSelector(`.task-row:has-text("后台刷新新增")`);
 
-    // 场景二：正在编辑内联表单 → 后台刷新不得替换视图（输入保留）
+    // 场景二：新增弹窗打开中 → 后台刷新不得替换视图（输入保留）
     const t2 = (await b.api('POST', '/api/tasks', { title: '不打断新增', category: '生活' })).json;
     await b.page.emulateMedia({ reducedMotion: 'reduce' });   // 即时挂载，时序可控
     await b.page.evaluate(() => { const hit = apiCache.get('/api/tasks'); if (hit) hit.ts = 0; });
@@ -469,16 +564,18 @@ test('缓存过期后台刷新成功：停留在当前视图时更新内容；�
       await route.continue();
     });
     await b.page.evaluate(() => route());
-    await b.page.click('#form-add-task [name="title"]');
-    await b.page.type('#form-add-task [name="title"]', '正在输入的内容');
+    await b.page.click('#btn-add-task');
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.type('#mf-title', '正在输入的内容');
     await b.page.waitForTimeout(1200);
     assert.equal(
-      await b.page.inputValue('#form-add-task [name="title"]'),
+      await b.page.inputValue('#mf-title'),
       '正在输入的内容',
       '后台刷新不得在用户编辑表单时替换视图',
     );
-    // 失焦后再次刷新：新数据正常出现（旧数据未被静默保留）
-    await b.page.click('#topbar-title');
+    // 关闭弹窗后再次刷新：新数据正常出现（旧数据未被静默保留）
+    await b.page.click('#mf-cancel');
+    await b.page.waitForFunction(() => document.querySelector('#modal-mask').hidden);
     await b.page.evaluate(() => rerender(renderTasks));
     await b.page.waitForSelector('.task-row:has-text("不打断新增")');
     b.assertNoPageErrors();

@@ -162,7 +162,7 @@ const STATUS_BADGE = {
   '流程完成': 'b-green', 'Offer': 'b-gold', '已拒绝': 'b-red', '已结束': 'b-gray',
 };
 const PRIORITY_BADGE = { '高': 'b-red', '中': 'b-amber', '低': 'b-gray' };
-const TASK_CATEGORIES = ['求职', '实习', '学习', '生活', '其他'];
+const TASK_CATEGORIES = ['生活', '工作', '学习', '求职', '实习', '其他'];
 const ACH_CATEGORIES = ['项目', '学习', '协作', '成长', '其他'];
 const ACH_BADGE = { '项目': 'b-accent', '学习': 'b-blue', '协作': 'b-green', '成长': 'b-gold', '其他': 'b-gray' };
 
@@ -579,7 +579,7 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-/* ---------- 视图：任务日程 ---------- */
+/* ---------- 视图：待办与日程 ---------- */
 async function renderTasks(urlParams = new URLSearchParams()) {
   const today = todayStr();
   const urlState = ['open', 'done', 'all'].includes(urlParams.get('state')) ? urlParams.get('state') : 'open';
@@ -661,15 +661,9 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
           <button class="chip ${urlCategory === '' ? 'active' : ''}" data-category="">全部</button>
           ${TASK_CATEGORIES.map((c) => `<button class="chip ${urlCategory === c ? 'active' : ''}" data-category="${c}">${c}</button>`).join('')}
         </div>
-        <form class="inline-form" id="form-add-task">
-          <input class="grow" name="title" placeholder="新任务标题…" required />
-          <input name="due_date" type="date" />
-          <select name="category">${TASK_CATEGORIES.map((c) => `<option>${c}</option>`).join('')}</select>
-          <button class="btn btn-primary" type="submit">添加</button>
-        </form>
-        <label style="font-size:12px;color:var(--ink-3);display:flex;gap:6px;align-items:center;margin:6px 2px 0">
-          <input type="checkbox" id="add-task-focus" /> 同时标记为今日重点
-        </label>
+        <div class="panel-actions">
+          <button class="btn btn-primary" id="btn-add-task">＋ 新增待办</button>
+        </div>
         ${visible.length === 0 ? `<div class="empty"><span class="empty-glyph">✓</span><p>${esc(emptyReason)}</p></div>` : ''}
         ${groups.map(([name, list, badge]) => list.length === 0 ? '' : `
           <div class="task-group">
@@ -700,20 +694,8 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
       </section>
     </div>`;
 
-  $('#form-add-task', box).addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const f = e.target;
-    try {
-      await api('POST', '/api/tasks', {
-        title: f.title.value.trim(),
-        due_date: f.due_date.value,
-        category: f.category.value,
-        focus_date: $('#add-task-focus', box).checked ? today : '',
-      });
-      toast('任务已添加');
-      rerender(currentRender());
-    } catch (err) { toast(err.message, true); }
-  });
+  // 新增与编辑共用 openTaskModal（首页快捷新增走同一表单）
+  $('#btn-add-task', box).addEventListener('click', () => openTaskModal(null));
 
   $('#form-add-event', box).addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -767,16 +749,20 @@ function taskRow(t, today) {
 }
 
 function openTaskModal(t) {
+  // 自定义旧分类不在预设列表时补入现值，避免保存时悄悄变成默认分类
+  const options = t && t.category && !TASK_CATEGORIES.includes(t.category)
+    ? [...TASK_CATEGORIES, t.category]
+    : TASK_CATEGORIES;
   openModal({
     title: t ? '编辑任务' : '新增待办',
     fields: [
       { name: 'title', label: '标题', required: true, full: true },
-      { name: 'category', label: '分类', type: 'select', options: TASK_CATEGORIES },
+      { name: 'category', label: '分类', type: 'select', options },
       { name: 'due_date', label: '截止日期', type: 'date' },
       { name: 'focus_date', label: '重点日期（设为今日重点则填今天）', type: 'date', full: true },
       { name: 'notes', label: '备注', type: 'textarea' },
     ],
-    values: t || {},
+    values: t || { category: '生活', due_date: '', focus_date: '' },
     onSubmit: async (data) => {
       if (t) {
         await api('PATCH', `/api/tasks/${t.id}`, data);
@@ -912,7 +898,7 @@ async function rerender(renderFn) {
 const ROUTES = {
   today: { title: '今日首页', render: renderToday },
   campus: { title: '校招投递', render: renderCampus },
-  tasks: { title: '任务日程', render: renderTasks },
+  tasks: { title: '待办与日程', render: renderTasks },
   achievements: { title: '成果记录', render: renderAchievements },
 };
 
