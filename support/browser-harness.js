@@ -31,7 +31,11 @@ async function launchBrowser({ seed = false, appOptions = {}, loginPassword } = 
     const pageErrors = [];
     page.on('pageerror', (err) => pageErrors.push(`pageerror: ${err.message}`));
     page.on('console', (msg) => {
-      if (msg.type() === 'error') pageErrors.push(`console.error: ${msg.text()}`);
+      // Chromium 对任何非 2xx 网络响应都会打印 "Failed to load resource"，
+      // 这是网络层噪音而非应用错误（应用已捕获并展示 toast），予以过滤。
+      if (msg.type() === 'error' && !msg.text().startsWith('Failed to load resource')) {
+        pageErrors.push(`console.error: ${msg.text()}`);
+      }
     });
 
     async function close() {
