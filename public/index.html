@@ -47,6 +47,7 @@
         <button class="btn btn-ghost icon-btn" id="btn-menu" aria-label="菜单">☰</button>
         <h1 class="topbar-title" id="topbar-title">今日首页</h1>
         <div class="topbar-date" id="topbar-date"></div>
+        <button class="btn btn-ghost icon-btn" id="btn-reminders" aria-label="站内提醒">🔔<span class="rem-count" id="reminders-count" hidden>0</span></button>
       </header>
       <main class="view" id="view">
         <div class="loading"><span class="spinner" aria-hidden="true"></span>加载中…</div>
@@ -66,6 +67,18 @@
 
   <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 
+  <!-- 站内提醒中心：位于 #view 之外，轮询只更新自身，不重置视图内表单 -->
+  <div class="reminders-panel" id="reminders-panel">
+    <div class="rem-panel-head">
+      <div class="rem-panel-title">🔔 站内提醒</div>
+      <div class="rem-note">站内提醒；关闭网页时不会主动推送</div>
+    </div>
+    <div class="rem-list" id="reminders-list"><div class="rem-empty">加载中…</div></div>
+    <div class="rem-panel-foot">
+      <button class="btn btn-ghost btn-sm" id="btn-reminders-notify">🔕 启用通知（可选）</button>
+    </div>
+  </div>
+
   <!-- 移动端底部导航（≤760px 显示，与侧边栏同一路由表） -->
   <nav class="bottom-nav" id="bottom-nav" aria-label="移动端主导航">
     <a href="#/today" data-route="today"><span class="bn-ico" aria-hidden="true">◉</span><span>今日</span></a>
@@ -77,5 +90,6 @@
   <script src="/theme.js"></script>
   <script src="/vendor/nebula.min.js"></script>
   <script src="/app.js"></script>
+  <script src="/reminders.js"></script>
 </body>
 </html>

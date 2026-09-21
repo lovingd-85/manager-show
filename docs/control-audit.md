@@ -2,7 +2,7 @@
 
 > 原则：保留控件必须有具体行为与对应测试；纯装饰改用 `span`；未实现能力说明原因，不提供「敬请期待」按钮。
 > 错误态统一约定：网络失败 → toast 显示服务端错误并保留输入（弹窗不关闭）；未登录 → 跳转登录页；数据被并发修改 → 明确提示原因。
-> 状态：2026-09-22，覆盖至计划 5A。提醒（6C）与聊天（7C）交付后需回填本表对应行。
+> 状态：2026-09-22，覆盖至计划 6C。聊天（7C）交付后需回填第 32 行。
 
 | # | 页面 | 控件（可访问名称/selector） | 保留/删除 | 触发请求 | 可见结果 | 错误态 | 对应测试 |
 |---|------|------------------------------|-----------|----------|----------|--------|----------|
@@ -36,9 +36,13 @@
 | 28 | 成果记录 | 成果编辑 `[data-ach-edit]` | 保留 | 弹窗 → PATCH/DELETE | 保存/删除即时生效 | 弹窗内 toast | browser-actions 成果 CRUD 测试 |
 | 29 | 弹窗 | 关闭 ✕ `#modal-close` / 取消 `#mf-cancel` / Esc / 点遮罩 | 保留 | 无（纯关闭） | 弹窗关闭 | — | browser-actions 取消测试；public-ui Escape 契约 |
 | 30 | 弹窗 | 删除 `#mf-delete`（仅编辑态出现） | 保留 | DELETE + 确认 | 记录删除、缓存精确失效 | 失败 → toast，弹窗不关闭 | browser-actions 删除测试；cache-behavior |
-| 31 | 全局 | 站内提醒中心入口（铃铛） | 计划中（6C 交付） | — | 站内提醒；关闭网页时不会主动推送 | — | 待 6C 回填 |
+| 31 | 全局顶栏 | 站内提醒入口（铃铛）`#btn-reminders` + 未读角标 `#reminders-count` | 保留 | GET /api/reminders（加载/30s/可见性恢复轮询） | 角标显示未读数；面板列出未读+待触发提醒 | 轮询失败保持现状；401 → 清除状态并跳转登录 | browser-reminders 到期激活/重载补看/通知拒绝 |
+| 31a | 提醒面板 | 查看事项 `[data-rem-view]` / 已读 `[data-rem-read]` / 取消 `[data-rem-cancel]` | 保留 | 深链导航 / PATCH read / PATCH cancelled | 打开事项详情；条目从列表消失、角标即时更新 | PATCH 失败 → toast，面板保持 | browser-reminders 已读与取消 |
+| 31b | 提醒面板 | 启用通知（可选）`#btn-reminders-notify` | 保留 | Notification.requestPermission | 授权后新未读发系统通知；拒绝/不支持如实说明，不影响站内提醒 | — | browser-reminders 通知拒绝路径 |
+| 31c | 任务/日程表单 | 提醒时间字段 `#mf-remind_at` / 日程内联 `[name=remind_at]`（可选，中国时间） | 保留 | 事项保存成功后 upsert 活跃提醒（POST/PATCH /api/reminders） | 面板出现对应提醒；同事项两次保存只更新不重复 | 提醒失败 → toast「事项已保存，提醒设置失败，请重试」，事项保留 | browser-reminders 表单设置/失败/upsert |
 | 32 | 全局 | 与 Hermes 对话（右下入口 + 常驻抽屉） | 计划中（7C 交付） | — | 同源代理连接 Hermes Agent，不直连模型 | — | 待 7C 回填 |
 
 ## 变更记录
 
 - 2026-09-22（5A）：删除 `#btn-reset-seed` 及其绑定与 `POST /api/seed/reset` 默认注册；`createApp({ allowSeedReset: true })` 仅隔离测试/演示显式开启（test/applications.test.js 已显式开启）；生产无入口、默认 404。
+- 2026-09-22（6C）：回填第 31 行并拆分为 31a/31b/31c——铃铛+角标+面板（查看事项/已读/取消）、可选系统通知（拒绝不影响中心）、任务/日程表单可选提醒字段（中国时间，upsert，失败不推翻已保存事项）。

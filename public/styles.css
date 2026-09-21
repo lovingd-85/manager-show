@@ -222,6 +222,38 @@ body.nebula-on .bg-grid { opacity: .55; }
 .topbar-date { margin-left: auto; color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 #btn-menu { display: none; }
 
+/* ---------- 站内提醒中心（6C）：铃铛 + 面板，面板在 #view 之外，轮询不重置表单 ---------- */
+#btn-reminders { position: relative; font-size: 16px; }
+.rem-count {
+  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px;
+  padding: 0 4px; border-radius: 8px; background: #6366f1; color: #fff;
+  font-size: 11px; line-height: 16px; text-align: center; font-weight: 700;
+}
+.reminders-panel {
+  position: fixed; top: 58px; right: 14px; width: min(360px, calc(100vw - 28px));
+  max-height: 70vh; overflow: auto; z-index: 40;
+  background: rgba(13, 17, 38, .97);
+  border: 1px solid rgba(99, 102, 241, .4);
+  border-radius: 14px; padding: 14px;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .55);
+  display: none;
+}
+.reminders-panel.open { display: block; }
+.rem-panel-title { font-weight: 800; font-size: 14px; }
+.rem-note { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+.rem-list { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.rem-entry {
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  background: rgba(255, 255, 255, .03);
+}
+.rem-entry.unread { border-color: rgba(99, 102, 241, .55); background: rgba(99, 102, 241, .08); }
+.rem-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rem-title { font-weight: 600; font-size: 13.5px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rem-meta { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+.rem-actions { display: flex; gap: 8px; margin-top: 8px; }
+.rem-empty { color: var(--ink-3); font-size: 13px; text-align: center; padding: 14px 0; }
+.rem-panel-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); text-align: center; }
+
 .view { padding: 18px 24px 44px; max-width: 1280px; width: 100%; margin: 0 auto; }
 
 /* 路由过渡：#view 离场短淡出 + 轻微上移，入场淡入 + 轻微上移。

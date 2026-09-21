@@ -381,6 +381,7 @@ function bindTaskToggles(root, refresh) {
       try {
         await api('PATCH', `/api/tasks/${el.dataset.taskToggle}`, { done: el.checked });
         toast(el.checked ? '已完成，干得漂亮！' : '已标记为未完成');
+        if (window.remindersHub) window.remindersHub.refresh().catch(() => {});   // 完成联动取消提醒，角标即时更新
         await refresh();
       } catch (err) { toast(err.message, true); el.checked = !el.checked; }
     });
@@ -683,6 +684,7 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
           <input class="grow" name="title" placeholder="新日程…" required />
           <input name="date" type="date" required value="${today}" />
           <input name="start_time" type="time" />
+          <input name="remind_at" type="datetime-local" title="提醒时间（可选 · 中国时间）" />
           <button class="btn btn-primary" type="submit">添加</button>
         </form>
         ${events.length === 0 ? '<div class="empty"><span class="empty-glyph">▦</span><p>这段时间没有日程</p></div>' : ''}
@@ -707,10 +709,12 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
     e.preventDefault();
     const f = e.target;
     try {
-      await api('POST', '/api/events', {
+      const created = await api('POST', '/api/events', {
         title: f.title.value.trim(), date: f.date.value, start_time: f.start_time.value,
       });
       toast('日程已添加');
+      // 提醒保存失败不影响已保存的日程：如实提示重试
+      await saveReminderQuietly('event', `manual:${created.id}`, f.remind_at.value);
       rerender(currentRender());
     } catch (err) { toast(err.message, true); }
   });
@@ -765,6 +769,18 @@ function openTaskCopyModal(t) {
   });
 }
 
+// 事项保存成功后同步提醒：失败不影响已保存的事项，如实提示重试（不假成功、不重复创建）
+async function saveReminderQuietly(entityType, entityKey, remindAtLocal) {
+  const hub = window.remindersHub;
+  if (!hub) return;
+  try {
+    const r = await hub.saveEntityReminder(entityType, entityKey, remindAtLocal);
+    if (!r.ok) toast('事项已保存，提醒设置失败，请重试', true);
+  } catch {
+    toast('事项已保存，提醒设置失败，请重试', true);
+  }
+}
+
 // 绑定「复制为个人待办」按钮（首页摘要与任务页共用）
 function bindTaskCopyButtons(box, tasks) {
   box.querySelectorAll('[data-task-copy]').forEach((b) => b.addEventListener('click', () => {
@@ -773,12 +789,17 @@ function bindTaskCopyButtons(box, tasks) {
   }));
 }
 
-function openTaskModal(t, preset) {
+async function openTaskModal(t, preset) {
   // 自定义旧分类不在预设列表时补入现值，避免保存时悄悄变成默认分类
   const base = t || preset || {};
   const options = base.category && !TASK_CATEGORIES.includes(base.category)
     ? [...TASK_CATEGORIES, base.category]
     : TASK_CATEGORIES;
+  // 编辑时预填当前活跃提醒（上海 datetime-local）；预填失败不阻塞表单
+  let remindAt = '';
+  if (t && window.remindersHub) {
+    try { remindAt = await window.remindersHub.activeReminderFor('task', `manual:${t.id}`); } catch { /* 忽略 */ }
+  }
   openModal({
     title: t ? '编辑任务' : '新增待办',
     fields: [
@@ -786,28 +807,39 @@ function openTaskModal(t, preset) {
       { name: 'category', label: '分类', type: 'select', options },
       { name: 'due_date', label: '截止日期', type: 'date' },
       { name: 'focus_date', label: '重点日期（设为今日重点则填今天）', type: 'date', full: true },
+      { name: 'remind_at', label: '提醒时间（可选 · 中国时间）', type: 'datetime-local', full: true },
       { name: 'notes', label: '备注', type: 'textarea' },
     ],
-    values: t || preset || { category: '生活', due_date: '', focus_date: '' },
+    values: { ...(t || preset || { category: '生活', due_date: '', focus_date: '' }), remind_at: remindAt },
     onSubmit: async (data) => {
+      const { remind_at: remindAtLocal, ...taskData } = data;
+      let saved = t;
       if (t) {
-        await api('PATCH', `/api/tasks/${t.id}`, data);
+        await api('PATCH', `/api/tasks/${t.id}`, taskData);
         toast('任务已更新');
       } else {
-        await api('POST', '/api/tasks', data);
+        saved = await api('POST', '/api/tasks', taskData);
         toast('任务已添加');
       }
+      // 提醒保存失败不影响已保存的事项：如实提示重试，不假成功、不重复创建
+      await saveReminderQuietly('task', `manual:${saved.id}`, remindAtLocal);
       rerender(currentRender());
     },
     onDelete: t ? async () => {
       await api('DELETE', `/api/tasks/${t.id}`);
       toast('任务已删除');
+      if (window.remindersHub) window.remindersHub.refresh().catch(() => {});
       rerender(currentRender());
     } : null,
   });
 }
 
-function openEventModal(ev) {
+async function openEventModal(ev) {
+  // 预填当前活跃提醒（上海 datetime-local）；预填失败不阻塞表单
+  let remindAt = '';
+  if (window.remindersHub) {
+    try { remindAt = await window.remindersHub.activeReminderFor('event', `manual:${ev.id}`); } catch { /* 忽略 */ }
+  }
   openModal({
     title: '编辑日程',
     fields: [
@@ -816,17 +848,21 @@ function openEventModal(ev) {
       { name: 'location', label: '地点' },
       { name: 'start_time', label: '开始时间', type: 'time' },
       { name: 'end_time', label: '结束时间', type: 'time' },
+      { name: 'remind_at', label: '提醒时间（可选 · 中国时间）', type: 'datetime-local', full: true },
       { name: 'notes', label: '备注', type: 'textarea' },
     ],
-    values: ev,
+    values: { ...ev, remind_at: remindAt },
     onSubmit: async (data) => {
-      await api('PATCH', `/api/events/${ev.id}`, data);
+      const { remind_at: remindAtLocal, ...eventData } = data;
+      await api('PATCH', `/api/events/${ev.id}`, eventData);
       toast('日程已更新');
+      await saveReminderQuietly('event', `manual:${ev.id}`, remindAtLocal);
       rerender(currentRender());
     },
     onDelete: async () => {
       await api('DELETE', `/api/events/${ev.id}`);
       toast('日程已删除');
+      if (window.remindersHub) window.remindersHub.refresh().catch(() => {});
       rerender(currentRender());
     },
   });
