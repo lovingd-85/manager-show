@@ -45,6 +45,10 @@ function createApp(options = {}) {
   const db = openDb(dbPath);
   if (seed && isEmpty(db)) seedData.seed(db);
 
+  // 同步脚本会为任务表补充 source/external_key 列；无该列时保持兼容（后续迁移统一补齐）
+  const taskColumns = new Set(db.prepare("SELECT name FROM pragma_table_info('tasks')").all().map((r) => r.name));
+  const tasksHaveSource = taskColumns.has('source');
+
   // ---------- 安全配置 ----------
   // 密码优先级：显式参数（哈希 > 明文）> 环境变量 > 数据库 > 首次启动生成随机密码
   let hashConf = adminPasswordHash;
@@ -324,9 +328,12 @@ function createApp(options = {}) {
     if (!parsed.ok) return bad(res, parsed.error);
     const t = parsed.value;
     const now = nowIso();
-    const info = db.prepare(`INSERT INTO tasks (title, category, due_date, focus_date, done, notes, created_at, done_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(t.title, t.category, t.due_date, t.focus_date, t.done ? 1 : 0, t.notes, now, t.done ? now : null);
+    const insert = tasksHaveSource
+      ? db.prepare(`INSERT INTO tasks (title, category, due_date, focus_date, done, notes, created_at, done_at, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')`)
+      : db.prepare(`INSERT INTO tasks (title, category, due_date, focus_date, done, notes, created_at, done_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+    const info = insert.run(t.title, t.category, t.due_date, t.focus_date, t.done ? 1 : 0, t.notes, now, t.done ? now : null);
     res.status(201).json(serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid)));
   });
 
@@ -339,6 +346,10 @@ function createApp(options = {}) {
   app.patch('/api/tasks/:id', (req, res) => {
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
     if (!row) return notFound(res, '任务');
+    // 同步记录只读：未实现来源回写前拒绝修改，不装作保存成功
+    if (row.source && row.source !== 'manual') {
+      return res.status(409).json({ error: '同步记录只读，请复制为个人待办' });
+    }
     const parsed = validateTask(req.body || {}, { partial: true });
     if (!parsed.ok) return bad(res, parsed.error);
     const merged = { ...row, ...parsed.value };
@@ -349,8 +360,13 @@ function createApp(options = {}) {
   });
 
   app.delete('/api/tasks/:id', (req, res) => {
-    const info = db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
-    if (info.changes === 0) return notFound(res, '任务');
+    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!row) return notFound(res, '任务');
+    // 同步记录只读：未实现来源回写前拒绝删除
+    if (row.source && row.source !== 'manual') {
+      return res.status(409).json({ error: '同步记录只读，请复制为个人待办' });
+    }
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(row.id);
     res.status(204).end();
   });
 

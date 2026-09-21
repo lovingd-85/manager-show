@@ -4,6 +4,11 @@
 // 每个测试独立临时数据库；页面事件监听 pageerror/console.error，结束必须无错误。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('node:os');
+const path = require('node:path');
+const fs = require('node:fs');
+const { DatabaseSync } = require('node:sqlite');
+const { startServer } = require('../support/server-harness');
 const { launchBrowser } = require('../support/browser-harness');
 
 test('浏览器回归环境：登录后打开页面无错误，基础骨架渲染', async () => {
@@ -471,6 +476,80 @@ test('编辑任务：自定义分类不在预设列表时保留现值', async ()
     assert.equal(after.category, '临时', '保存后自定义分类应原样保留');
     await b.page.reload();
     await b.page.waitForSelector('.task-row:has-text("临时分类任务")');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+/* ---------- 时间与同步数据边界：中国时区、同步记录只读/复制 ---------- */
+
+test('时间：todayStr 按 Asia/Shanghai 计算，与浏览器时区无关', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/today');
+    // 2026-09-21T16:30:00Z = 上海 2026-09-22 00:30（UTC/美东仍是 09-21）
+    assert.equal(
+      await b.page.evaluate(() => todayStr(new Date('2026-09-21T16:30:00Z'))),
+      '2026-09-22',
+      '应返回上海日期而非浏览器本地日期',
+    );
+    // 2026-09-21T15:59:59Z = 上海 2026-09-21 23:59
+    assert.equal(
+      await b.page.evaluate(() => todayStr(new Date('2026-09-21T15:59:59Z'))),
+      '2026-09-21',
+    );
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('同步任务：显示来源、只读、可复制为个人待办；手工任务保持完整 CRUD', async () => {
+  // 模拟同步脚本已运行：预建库并加 source/external_key 列 + tracker 记录
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'manager-show-br-src-'));
+  const dbPath = path.join(tmpDir, 'test.db');
+  const warmup = await startServer({ appOptions: { dbPath } });
+  await warmup.close();
+  const db = new DatabaseSync(dbPath);
+  db.exec(`ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'`);
+  db.exec(`ALTER TABLE tasks ADD COLUMN external_key TEXT NOT NULL DEFAULT ''`);
+  db.prepare(`INSERT INTO tasks (title, category, due_date, focus_date, done, notes, created_at, done_at, source, external_key)
+    VALUES ('同步任务', '生活', '', '', 0, '', '2026-09-20T00:00:00.000Z', NULL, 'tracker', 't1')`).run();
+  db.prepare(`INSERT INTO tasks (title, category, due_date, focus_date, done, notes, created_at, done_at, source, external_key)
+    VALUES ('手工任务', '生活', '', '', 0, '', '2026-09-20T00:00:00.000Z', NULL, 'manual', '')`).run();
+  db.close();
+
+  const b = await launchBrowser({ appOptions: { dbPath } });
+  try {
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector('.task-row:has-text("同步任务")');
+    // 来源可见
+    const syncedRow = b.page.locator('.task-row:has-text("同步任务")');
+    assert.match(await syncedRow.textContent(), /tracker/, '应显示同步来源');
+    // 只读：无勾选、无编辑，只有「复制为个人待办」
+    assert.equal(await syncedRow.locator('[data-task-toggle]').count(), 0, '同步任务不应有完成勾选');
+    assert.equal(await syncedRow.locator('[data-task-edit]').count(), 0, '同步任务不应有编辑按钮');
+    assert.equal(await syncedRow.locator('[data-task-copy]').count(), 1, '同步任务应有复制按钮');
+    // 手工任务保持完整 CRUD
+    const manualRow = b.page.locator('.task-row:has-text("手工任务")');
+    assert.equal(await manualRow.locator('[data-task-toggle]').count(), 1);
+    assert.equal(await manualRow.locator('[data-task-edit]').count(), 1);
+
+    // 复制为个人待办：预填字段、保存后独立成行且 source=manual
+    await syncedRow.locator('[data-task-copy]').click();
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    assert.equal(await b.page.textContent('#modal-title'), '新增待办');
+    assert.equal(await b.page.inputValue('#mf-title'), '同步任务');
+    assert.equal(await b.page.inputValue('#mf-category'), '生活');
+    await b.page.fill('#mf-title', '同步任务·副本');
+    await b.page.click('#modal-form button[type="submit"]');
+    await b.page.waitForSelector('.task-row:has-text("同步任务·副本")');
+    const tasks = (await b.api('GET', '/api/tasks')).json;
+    const copy = tasks.find((t) => t.title === '同步任务·副本');
+    assert.ok(copy, '副本应写入数据库');
+    assert.equal(copy.source, 'manual', '副本必须是独立手工记录');
+    assert.notEqual(copy.id, tasks.find((t) => t.title === '同步任务').id, '副本必须独立于同步记录');
     b.assertNoPageErrors();
   } finally {
     await b.close();

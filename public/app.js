@@ -11,9 +11,14 @@ function esc(s) {
   }[c]));
 }
 
-function todayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// 全程明确 Asia/Shanghai：不依赖浏览器/主机时区
+const cnDateFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function todayStr(now = new Date()) {
+  const parts = cnDateFmt.formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 function addDaysStr(dateStr, n) {
@@ -301,6 +306,7 @@ async function renderToday() {
     </div>`;
 
   bindTaskToggles(box, () => rerender(renderToday));
+  bindTaskCopyButtons(box, d.openTasks);
   $('#btn-quick-task', box).addEventListener('click', () => openTaskModal(null));
   $('#btn-quick-app', box).addEventListener('click', () => openAppModal(null));
   const focusAdd = $('#btn-add-focus-task', box);
@@ -345,12 +351,13 @@ function interviewItem(a) {
 }
 
 function focusItem(t, i) {
+  const synced = t.source && t.source !== 'manual';
   return `
     <div class="focus-item ${t.done ? 'done' : ''}">
       <span class="focus-rank">${i + 1}</span>
-      <input type="checkbox" class="check" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''}/>
+      ${synced ? '' : `<input type="checkbox" class="check" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''}/>`}
       <div>
-        <div class="focus-title">${esc(t.title)}</div>
+        <div class="focus-title">${esc(t.title)}${synced ? ` <span class="badge b-violet">同步 · ${esc(t.source)}</span>` : ''}</div>
         <div class="focus-meta">${esc(t.category)}${t.due_date ? ' · 截止 ' + fmtCN(t.due_date) : ''}</div>
       </div>
     </div>`;
@@ -718,6 +725,7 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
   }));
 
   bindTaskToggles(box, () => rerender(currentRender()));
+  bindTaskCopyButtons(box, tasks);
   box.querySelectorAll('[data-task-edit]').forEach((b) => b.addEventListener('click', () => {
     const t = tasks.find((x) => x.id === Number(b.dataset.taskEdit));
     if (t) openTaskModal(t);
@@ -731,11 +739,12 @@ async function buildTasksView({ today, tasks, events, urlState, urlCategory, loc
 
 function taskRow(t, today) {
   const od = !t.done && t.due_date && t.due_date < today;
+  const synced = t.source && t.source !== 'manual';
   return `
     <div class="task-row ${t.done ? 'done' : ''}">
-      <input type="checkbox" class="check" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''} />
+      ${synced ? '' : `<input type="checkbox" class="check" data-task-toggle="${t.id}" ${t.done ? 'checked' : ''} />`}
       <div class="body">
-        <div class="title">${esc(t.title)}${t.focus_date === today ? ' <span class="badge b-accent">今日重点</span>' : ''}</div>
+        <div class="title">${esc(t.title)}${t.focus_date === today ? ' <span class="badge b-accent">今日重点</span>' : ''}${synced ? ` <span class="badge b-violet">同步 · ${esc(t.source)}</span>` : ''}</div>
         <div class="meta">
           <span>${esc(t.category)}</span>
           ${t.due_date ? `<span class="${od ? 'overdue' : ''}">截止 ${fmtCN(t.due_date)}${od ? `（逾期 ${overdueDays(t.due_date)} 天）` : ''}</span>` : ''}
@@ -743,15 +752,33 @@ function taskRow(t, today) {
         </div>
       </div>
       <div class="row-actions">
-        <button class="btn btn-ghost btn-sm" data-task-edit="${t.id}">编辑</button>
+        ${synced
+          ? `<button class="btn btn-ghost btn-sm" data-task-copy="${t.id}">复制为个人待办</button>`
+          : `<button class="btn btn-ghost btn-sm" data-task-edit="${t.id}">编辑</button>`}
       </div>
     </div>`;
 }
 
-function openTaskModal(t) {
+// 同步任务复制为独立手工待办：预填内容，保存走 POST，新记录 source=manual
+function openTaskCopyModal(t) {
+  openTaskModal(null, {
+    title: t.title, category: t.category, due_date: t.due_date, notes: t.notes,
+  });
+}
+
+// 绑定「复制为个人待办」按钮（首页摘要与任务页共用）
+function bindTaskCopyButtons(box, tasks) {
+  box.querySelectorAll('[data-task-copy]').forEach((b) => b.addEventListener('click', () => {
+    const t = tasks.find((x) => x.id === Number(b.dataset.taskCopy));
+    if (t) openTaskCopyModal(t);
+  }));
+}
+
+function openTaskModal(t, preset) {
   // 自定义旧分类不在预设列表时补入现值，避免保存时悄悄变成默认分类
-  const options = t && t.category && !TASK_CATEGORIES.includes(t.category)
-    ? [...TASK_CATEGORIES, t.category]
+  const base = t || preset || {};
+  const options = base.category && !TASK_CATEGORIES.includes(base.category)
+    ? [...TASK_CATEGORIES, base.category]
     : TASK_CATEGORIES;
   openModal({
     title: t ? '编辑任务' : '新增待办',
@@ -762,7 +789,7 @@ function openTaskModal(t) {
       { name: 'focus_date', label: '重点日期（设为今日重点则填今天）', type: 'date', full: true },
       { name: 'notes', label: '备注', type: 'textarea' },
     ],
-    values: t || { category: '生活', due_date: '', focus_date: '' },
+    values: t || preset || { category: '生活', due_date: '', focus_date: '' },
     onSubmit: async (data) => {
       if (t) {
         await api('PATCH', `/api/tasks/${t.id}`, data);
@@ -987,11 +1014,13 @@ async function route() {
 }
 
 function initChrome() {
+  // 问候语同样按上海时间展示，不随浏览器时区漂移
   const d = new Date();
-  const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-  const hour = d.getHours();
+  const [y, m, day] = todayStr(d).split('-');
+  const week = ['日', '一', '二', '三', '四', '五', '六'][new Date(`${y}-${m}-${day}T00:00:00`).getDay()];
+  const hour = (d.getUTCHours() + 8) % 24;   // 上海 = UTC+8，无夏令时
   const greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
-  $('#topbar-date').textContent = `${greet} · ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${week}`;
+  $('#topbar-date').textContent = `${greet} · ${Number(m)} 月 ${Number(day)} 日 · 星期${week}`;
   $('#btn-menu').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   $('#btn-reset-seed').addEventListener('click', async () => {
     if (!confirm('将清空全部数据并恢复示例数据，确定吗？')) return;

@@ -11,13 +11,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { createApp } = require('../src/app');
+const { todayLocal } = require('../src/dates');
 
+// 与前后端一致：今天的语义是 Asia/Shanghai
 function localToday() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return todayLocal();
 }
 
 function addDays(dateStr, n) {
