@@ -299,3 +299,108 @@ test('重复提交防护：一次表单提交只触发一次 POST（无重复监
     await b.close();
   }
 });
+
+/* ---------- 异步渲染竞态：旧保存回调不得覆盖新路由 ---------- */
+
+test('保存请求延迟时跳转成果页：请求完成后成果页不得被任务列表覆盖', async () => {
+  const b = await launchBrowser();
+  try {
+    const t = (await b.api('POST', '/api/tasks', { title: '竞态任务', category: '生活' })).json;
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector(`[data-task-edit="${t.id}"]`);
+    await b.page.click(`[data-task-edit="${t.id}"]`);
+    await b.page.waitForSelector('#modal-mask:not([hidden])');
+    await b.page.fill('#mf-title', '竞态任务改');
+
+    // 挂起 PATCH，直到测试放行
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let startedResolve;
+    const started = new Promise((r) => { startedResolve = r; });
+    await b.page.route('**/api/tasks/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        startedResolve();
+        await gate;
+      }
+      await route.continue();
+    });
+    const submitP = b.page.click('#modal-form button[type="submit"]');
+    await started;   // PATCH 已发出并挂起
+    await b.page.goto(b.baseUrl + '/#/achievements');
+    await b.page.waitForSelector('#btn-add-ach');
+
+    release();       // 放行 PATCH，保存完成
+    await submitP;
+    await b.page.waitForFunction(() => document.querySelector('#modal-mask').hidden);
+
+    // 成果页不得被任务列表覆盖；保存本身真实生效
+    await b.page.waitForSelector('#btn-add-ach');
+    assert.equal(await b.page.locator('#view .task-row').count(), 0, '成果页不应出现任务列表内容');
+    assert.equal((await b.api('GET', `/api/tasks/${t.id}`)).json.title, '竞态任务改');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('缓存过期后台刷新失败：显示「更新失败，可重试」而不是永远静默旧数据', async () => {
+  const b = await launchBrowser();
+  try {
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector('.two-col');
+    await b.page.evaluate(() => { const hit = apiCache.get('/api/tasks'); if (hit) hit.ts = 0; });
+    await b.page.route('**/api/tasks', (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: '刷新失败测试' }) }));
+    await b.page.evaluate(() => rerender(renderTasks));
+    await b.page.waitForSelector('#toast:not([hidden])');
+    assert.match(await b.page.textContent('#toast'), /更新失败，可重试/);
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});
+
+test('缓存过期后台刷新成功：停留在当前视图时更新内容；表单编辑中不打断', async () => {
+  const b = await launchBrowser();
+  try {
+    // 先缓存旧列表，再通过 API 新增任务（新数据与缓存不同）
+    await b.page.goto(b.baseUrl + '/#/tasks');
+    await b.page.waitForSelector('.two-col');
+    const t = (await b.api('POST', '/api/tasks', { title: '后台刷新新增', category: '生活' })).json;
+
+    // 场景一：无编辑 → 后台刷新成功后视图自动更新，能看到新任务
+    await b.page.evaluate(() => { const hit = apiCache.get('/api/tasks'); if (hit) hit.ts = 0; });
+    await b.page.evaluate(() => rerender(renderTasks));
+    await b.page.waitForSelector(`.task-row:has-text("后台刷新新增")`);
+
+    // 场景二：正在编辑内联表单 → 后台刷新不得替换视图（输入保留）
+    const t2 = (await b.api('POST', '/api/tasks', { title: '不打断新增', category: '生活' })).json;
+    await b.page.emulateMedia({ reducedMotion: 'reduce' });   // 即时挂载，时序可控
+    await b.page.evaluate(() => { const hit = apiCache.get('/api/tasks'); if (hit) hit.ts = 0; });
+    // 下一次列表 GET 延迟 800ms：用户在后台刷新完成前开始输入
+    let delayedOnce = false;
+    await b.page.route('**/api/tasks', async (route) => {
+      if (route.request().method() === 'GET' && !delayedOnce) {
+        delayedOnce = true;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      await route.continue();
+    });
+    await b.page.evaluate(() => route());
+    await b.page.click('#form-add-task [name="title"]');
+    await b.page.type('#form-add-task [name="title"]', '正在输入的内容');
+    await b.page.waitForTimeout(1200);
+    assert.equal(
+      await b.page.inputValue('#form-add-task [name="title"]'),
+      '正在输入的内容',
+      '后台刷新不得在用户编辑表单时替换视图',
+    );
+    // 失焦后再次刷新：新数据正常出现（旧数据未被静默保留）
+    await b.page.click('#topbar-title');
+    await b.page.evaluate(() => rerender(renderTasks));
+    await b.page.waitForSelector('.task-row:has-text("不打断新增")');
+    b.assertNoPageErrors();
+  } finally {
+    await b.close();
+  }
+});

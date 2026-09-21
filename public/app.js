@@ -76,7 +76,9 @@ async function apiGet(url) {
   const hit = apiCache.get(url);
   if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
 
-  // 过期缓存：先返回旧数据，后台刷新（失败静默，旧缓存继续可用）
+  // 过期缓存：先返回旧数据，后台刷新。
+  // 刷新成功：仅当仍停留在发起刷新的视图、且用户没有正在编辑的表单时才更新视图；
+  // 刷新失败：明确提示「更新失败，可重试」，绝不永远静默显示旧数据。
   if (hit) {
     if (!inflight.has(url)) {
       const p = fetchJson(url)
@@ -86,7 +88,12 @@ async function apiGet(url) {
         })
         .catch((err) => { if (inflight.get(url) === p) inflight.delete(url); throw err; });
       inflight.set(url, p);
-      p.catch(() => {});
+      const gen = navSeq;
+      p.then(() => {
+        if (gen === navSeq && !viewBeingEdited()) rerender(currentRender());
+      }).catch(() => {
+        if (gen === navSeq) toast('更新失败，可重试', true);
+      });
     }
     return hit.data;
   }
@@ -367,11 +374,11 @@ async function renderCampus() {
 
   $('#campus-q', box).addEventListener('input', debounce((e) => {
     campusState.q = e.target.value;
-    rerender(renderCampus);
+    rerender(currentRender());
   }, 350));
   box.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
     campusState.status = c.dataset.status;
-    rerender(renderCampus);
+    rerender(currentRender());
   }));
   $('#btn-add-app', box).addEventListener('click', () => openAppModal(null));
   box.querySelectorAll('[data-app-id]').forEach((card) => card.addEventListener('click', () => {
@@ -425,12 +432,12 @@ function openAppModal(a) {
         await api('POST', '/api/applications', data);
         toast('已新增投递');
       }
-      rerender(renderCampus);
+      rerender(currentRender());
     },
     onDelete: a ? async () => {
       await api('DELETE', `/api/applications/${a.id}`);
       toast('已删除');
-      rerender(renderCampus);
+      rerender(currentRender());
     } : null,
   });
 }
@@ -510,7 +517,7 @@ async function renderTasks() {
         focus_date: $('#add-task-focus', box).checked ? today : '',
       });
       toast('任务已添加');
-      rerender(renderTasks);
+      rerender(currentRender());
     } catch (err) { toast(err.message, true); }
   });
 
@@ -522,11 +529,11 @@ async function renderTasks() {
         title: f.title.value.trim(), date: f.date.value, start_time: f.start_time.value,
       });
       toast('日程已添加');
-      rerender(renderTasks);
+      rerender(currentRender());
     } catch (err) { toast(err.message, true); }
   });
 
-  bindTaskToggles(box, () => rerender(renderTasks));
+  bindTaskToggles(box, () => rerender(currentRender()));
   box.querySelectorAll('[data-task-edit]').forEach((b) => b.addEventListener('click', () => {
     const t = tasks.find((x) => x.id === Number(b.dataset.taskEdit));
     if (t) openTaskModal(t);
@@ -571,12 +578,12 @@ function openTaskModal(t) {
     onSubmit: async (data) => {
       await api('PATCH', `/api/tasks/${t.id}`, data);
       toast('任务已更新');
-      rerender(renderTasks);
+      rerender(currentRender());
     },
     onDelete: async () => {
       await api('DELETE', `/api/tasks/${t.id}`);
       toast('任务已删除');
-      rerender(renderTasks);
+      rerender(currentRender());
     },
   });
 }
@@ -596,12 +603,12 @@ function openEventModal(ev) {
     onSubmit: async (data) => {
       await api('PATCH', `/api/events/${ev.id}`, data);
       toast('日程已更新');
-      rerender(renderTasks);
+      rerender(currentRender());
     },
     onDelete: async () => {
       await api('DELETE', `/api/events/${ev.id}`);
       toast('日程已删除');
-      rerender(renderTasks);
+      rerender(currentRender());
     },
   });
 }
@@ -661,12 +668,12 @@ function openAchModal(a) {
         await api('POST', '/api/achievements', data);
         toast('已记录成果，继续加油！');
       }
-      rerender(renderAchievements);
+      rerender(currentRender());
     },
     onDelete: a ? async () => {
       await api('DELETE', `/api/achievements/${a.id}`);
       toast('已删除');
-      rerender(renderAchievements);
+      rerender(currentRender());
     } : null,
   });
 }
@@ -680,10 +687,16 @@ function mountView(content) {
 }
 
 /* ---------- 数据刷新（非路由切换）：直接替换 #view 内容，不播过渡动画 ---------- */
+let rerenderSeq = 0;
 async function rerender(renderFn) {
+  const gen = navSeq;      // 挂载必须仍处于发起刷新时的路由代际
+  const seq = ++rerenderSeq;   // 同代际内只允许最后一次刷新挂载
   try {
-    mountView(await renderFn());
+    const content = await renderFn();
+    if (gen !== navSeq || seq !== rerenderSeq) return;   // 已有更新的导航/刷新
+    mountView(content);
   } catch (err) {
+    if (gen !== navSeq || seq !== rerenderSeq) return;
     view.innerHTML = `<div class="card panel empty">加载失败：${esc(err.message)}</div>`;
   }
 }
@@ -697,6 +710,20 @@ const ROUTES = {
 };
 
 let navSeq = 0;
+
+// 当前路由的渲染函数：保存/删除后的刷新跟随当前路由，避免旧回调把视图拖回别的页面
+function currentRender() {
+  const key = (location.hash.replace('#/', '') || 'today');
+  return (ROUTES[key] || ROUTES.today).render;
+}
+
+// 用户是否正在编辑视图内的表单（弹窗打开，或焦点在 #view 内的表单控件上）
+function viewBeingEdited() {
+  if (document.querySelector('#modal-mask:not([hidden])')) return true;
+  const el = document.activeElement;
+  return !!(el && el.closest && el.closest('#view form'));
+}
+
 async function route() {
   const key = (location.hash.replace('#/', '') || 'today');
   const r = ROUTES[key] || ROUTES.today;
