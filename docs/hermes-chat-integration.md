@@ -72,4 +72,23 @@ Manager Show 生产部署（`/home/ubuntu/Manager_Show`）与宿主 gateway 无�
 - [x] 7A 只读勘察（本文件）
 - [x] 7B 同源代理（`src/hermes-chat.js` + `/api/chat/*`，可隔离测试；提交 `d859399`）
 - [x] 7C 常驻抽屉 UI（`public/chat.js`，#view 之外，Esc/Enter/IME；提交见实施报告）
-- [ ] 7D 真实上游验收：**需父助手独立确认后执行**（用真实 key 跑通一轮会话）。若无法真实连通，如实报告「UI/代理已完成、真实接入未完成」。
+- [x] 7D 真实上游验收：**已完成**。接的是本地默认实例（不是容器里那个旧实例），工具面已先收紧到 `web/vision/todo`，接口只绑回环；真实会话轮次跑通，且行为验证确认读文件/执行命令均被拒。详见第 8 节。
+
+## 8. 7D 真实接入结果（2026-09-22 验收）
+
+**接哪个实例**：本地默认 profile（`~/.hermes`，0.21.3，systemd 用户服务 `hermes-gateway.service`，平台 `weixin` + `photon`）。容器 `hermes`（0.20.6，旧实例，平台 `api_server` + `weixin`）**不是**本次接的对象；它曾把 13 个工具集全暴露给任何能连上其 API 的进程，已于本次先收紧后按其主人要求**回滚为原状**（与备份逐字一致）。
+
+**上游侧配置**
+- `~/.hermes/.env`：`API_SERVER_ENABLED=true`、`API_SERVER_KEY`（`openssl rand -hex 32`，适配器拒绝弱密钥）、`API_SERVER_HOST=127.0.0.1`、`API_SERVER_PORT=8643`（8642 被容器端口发布占用）。
+- `~/.hermes/config.yaml`：`platform_toolsets.api_server: [web, vision, todo]` —— **先限权再启用**，绝不带全量工具启动。
+- 网关重启由用户执行（agent 终端被守护拦截，且从网关进程内部重启会杀掉自己）。
+
+**核验证据**
+- 监听：`ss -ltn` → 仅 `127.0.0.1:8643`（不对外）。
+- `GET /v1/toolsets`（认证）→ 3 个工具集：`web(web_search, web_extract)`、`vision(vision_analyze)`、`todo(todo_list)`；未认证 → 401（`/v1/health` 按设计免认证，仅返回 status/platform/version）。
+- `gateway_state.json` → `api_server`、`weixin`、`photon` 三者 `connected`；其它平台工具面 17 个，未受影响。
+- 行为验证（真实会话）：读 `/etc/hostname` → 「当前会话未提供本地文件读取工具」；执行 `id` → 「当前会话未提供终端执行工具」；都未编造结果。**注意**：同一限制下问它"你能做什么"它会泛泛回答"能处理文件与任务"——那是模型的通用自我介绍，不是能力证据，只能以工具列表和行为测试为准。
+
+**Manager Show 侧**：`/etc/manager-show/manager-show.env`（600）新增 `HERMES_API_BASE_URL=http://127.0.0.1:8643`、`HERMES_API_KEY`（与上游同值，哈希核对一致）；重启 `manager-show` 后生效。
+
+**端到端验收**（临时实例：生产代码 + 生产库副本 → 真实本地 API，用后删除）：未登录 `/api/chat/status` → 401；配置上游后聊天入口可见；新建会话 → 输入框出现；发送消息 → **真实上游返回回复**（非错误态）。唯一 4xx 是登录页预期的 `GET /api/auth/me` 401，属设计行为。
