@@ -230,5 +230,20 @@
     close();
   }, true);
 
+  // 入口显隐：上游未配置时隐藏聊天按钮，避免留下点了没反应的死按钮
+  (async function initEntry() {
+    const fab = $('#btn-chat');
+    if (!fab) return;
+    fab.hidden = true;
+    try {
+      const res = await fetch('/api/chat/status');
+      if (res.status === 401) { location.href = '/login'; return; }
+      const json = await res.json().catch(() => null);
+      fab.hidden = !(json && json.configured === true);
+    } catch {
+      fab.hidden = true;   // 无法确认可用性时不显示，不制造死按钮
+    }
+  })();
+
   renderList();
 })();

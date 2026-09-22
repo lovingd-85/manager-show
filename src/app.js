@@ -654,6 +654,11 @@ function createApp(options = {}) {
     res.status(502).json({ error: `聊天服务调用失败：${err && err.message ? err.message : '上游不可用'}` });
   };
 
+  // 前端据此决定是否显示聊天入口：未配置上游时不显示，避免留下点了没反应的按钮
+  app.get('/api/chat/status', (req, res) => {
+    res.json({ configured: chat.configured() });
+  });
+
   // 创建独立 Manager Show 会话：先在上游建成（避免本地留僵尸映射），再落库本地 id
   app.post('/api/chat/conversation', async (req, res, next) => {
     if (!chat.configured()) return res.status(503).json({ error: '聊天服务未配置（上游未启用），请稍后再试' });

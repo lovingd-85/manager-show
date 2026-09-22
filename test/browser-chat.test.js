@@ -206,6 +206,8 @@ test('重载后会话与历史保持：列表仍可进入，历史从上游读�
     await page.waitForSelector('#btn-chat');
     await page.click('#btn-chat');
     await page.waitForSelector('#chat-drawer:not([hidden])');
+    await page.waitForFunction(() => document.querySelector('#chat-drawer').textContent.includes('长期会话'),
+      undefined, { timeout: 6000 });   // 会话列表为异步加载，先等内容落地再断言
     assert.match(await page.textContent('#chat-drawer'), /长期会话/, '本地会话列表持久化');
     await page.click('.chat-conv');
     await page.waitForSelector('#chat-input');
@@ -218,19 +220,40 @@ test('重载后会话与历史保持：列表仍可进入，历史从上游读�
   }
 });
 
-test('未配置上游：如实提示，不创建会话、不假回复', async () => {
+test('未配置上游：聊天入口隐藏（不留死按钮），接口仍如实拒绝且不建会话', async () => {
   const b = await launchBrowser();   // 无 hermesApiKey
   try {
     const { page, api, baseUrl } = b;
     await page.goto(baseUrl + '/#/today');
-    await page.click('#btn-chat');
-    await page.waitForSelector('#chat-drawer:not([hidden])');
-    await page.fill('#chat-new-title', '不会成功');
-    await page.click('#chat-new-btn');
-    await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('未配置'));
+    const status = await page.waitForResponse((r) => r.url().includes('/api/chat/status'), { timeout: 10000 });
+    assert.deepEqual(await status.json(), { configured: false }, '状态接口应如实返回未配置');
+    await page.waitForFunction(() => document.querySelector('#btn-chat').hidden === true, undefined, { timeout: 4000 });
+    assert.equal(await page.isVisible('#btn-chat'), false, '未配置上游时不应显示聊天入口');
+
+    // 接口层仍必须如实拒绝（不能因为按钮藏起来就假装可用）
+    const res = await api('POST', '/api/chat/conversation', { title: '不会成功' });
+    assert.equal(res.status, 503);
+    assert.match(res.json.error, /未配置/);
     assert.equal((await api('GET', '/api/chat/conversations')).json.length, 0, '未配置时不产生本地会话');
     b.assertNoPageErrors('未配置上游');
   } finally {
+    await b.close();
+  }
+});
+
+test('已配置上游：聊天入口可见可点击', async () => {
+  const mock = await startMockHermes();
+  const b = await openWithUpstream(mock);
+  try {
+    const { page, baseUrl } = b;
+    await page.goto(baseUrl + '/#/today');
+    const status = await page.waitForResponse((r) => r.url().includes('/api/chat/status'), { timeout: 10000 });
+    assert.deepEqual(await status.json(), { configured: true }, '状态接口应如实返回已配置');
+    await page.waitForFunction(() => document.querySelector('#btn-chat').hidden === false, undefined, { timeout: 4000 });
+    assert.equal(await page.isVisible('#btn-chat'), true, '配置上游后应显示聊天入口');
+    b.assertNoPageErrors('已配置上游');
+  } finally {
+    await mock.close();
     await b.close();
   }
 });
