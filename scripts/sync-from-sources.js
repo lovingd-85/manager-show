@@ -102,6 +102,12 @@ function deleteLegacyEventDuplicates(db) {
     )`).run();
 }
 
+// 追踪表里"真的有下一步要做"的判定。只有它为真时，行里的日期才当作"下一步日期"，
+// 也才会生成待办 —— 否则投递确认日、双选会开始日这类历史日期会被首页当成超期风险。
+function isActionable(text) {
+  return /(?:AI 初试|面试)(?:待完成|已约|待参加)|(?:笔试|测评)(?:待完成|待参加)|(?:须|需要)[^。；]*投递/.test(text);
+}
+
 function syncFromSources({ dbPath, trackerPath, cronJobsPath, now = nowIso() }) {
   const db = openDb(dbPath);
   ensureSourceColumns(db);
@@ -111,18 +117,17 @@ function syncFromSources({ dbPath, trackerPath, cronJobsPath, now = nowIso() }) 
     const actionText = `${row.statusText} ${row.timing}`;
     const dateTime = extractDateTime(actionText, year);
     const status = applicationStatus(actionText);
+    const actionable = isActionable(actionText);
     return {
       key: `${row.company}|${row.position}`,
-      values: [row.company, row.position, '', '', status, /面试|笔试|测评|AI 初试/.test(`${row.statusText} ${row.timing}`) ? '高' : '中', row.appliedAt, row.statusText, dateTime.date, `渠道：${row.channel}\n${row.timing}`, now, now],
-      dateTime, status, row,
+      values: [row.company, row.position, '', '', status, /面试|笔试|测评|AI 初试/.test(`${row.statusText} ${row.timing}`) ? '高' : '中', row.appliedAt, row.statusText, actionable ? dateTime.date : '', `渠道：${row.channel}\n${row.timing}`, now, now],
+      dateTime, status, actionable, row,
     };
   });
   const trackerTasks = [];
   const trackerEvents = [];
   for (const app of apps) {
-    const action = `${app.row.statusText} ${app.row.timing}`;
-    const actionable = /(?:AI 初试|面试)(?:待完成|已约|待参加)|(?:笔试|测评)(?:待完成|待参加)|(?:须|需要)[^。；]*投递/.test(action);
-    if (!app.dateTime.date || !actionable) continue;
+    if (!app.dateTime.date || !app.actionable) continue;
     const title = `${app.row.company}：${app.row.position}`;
     trackerTasks.push({ key: app.key, values: [title, '求职', app.dateTime.date, app.dateTime.date, 0, `${app.row.statusText}；${app.row.timing}`, now, null] });
     if (app.dateTime.time) trackerEvents.push({ key: app.key, values: [title, app.dateTime.date, app.dateTime.time, '', '线上/待确认', app.row.timing] });

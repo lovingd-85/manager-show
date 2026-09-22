@@ -59,3 +59,28 @@ test('同步器只把未完成的求职流程呈现为待办和正式日程', ()
   assert.equal(db.prepare("SELECT count(*) AS n FROM events WHERE source='cron'").get().n, 0);
   db.close();
 });
+
+// 只有真正存在待办动作时，追踪表里的日期才是"下一步日期"。
+// 否则过去的日期（投递确认日、双选会开始日、已完成事项的日期）会被首页当成"超期风险"报警。
+test('没有待办动作的投递不产生下一步日期，有待办动作的保留日期', () => {
+  const tracker = tempFile('tracker.md', [
+    '# 校招投递追踪表',
+    '| 公司 | 岗位 | 投递日期 | 渠道 | 当前状态 | 关键时间节点 | 最近更新 |',
+    '|---|---|---|---|---|---|---|',
+    '| 待动作公司 | 算法工程师 | 2026-09-01 | 官网 | 🟢 在线专业笔试待参加 | 9/25 19:00 在线专业笔试 | 2026-09-20 |',
+    '| 已递确认公司 | 算法工程师 | 2026-09-01 | 官网 | 🟢 已投递确认，等待筛选 | 9/3 收到投递成功通知 | 2026-09-03 |',
+    '| 完成公司 | 算法工程师 | 2026-09-01 | 官网 | ✅ 在线笔试已完成 | 9/17 在线笔试已完成，等待复筛 | 2026-09-17 |',
+  ].join('\n'));
+  const cron = tempFile('jobs.json', JSON.stringify({ jobs: [] }));
+  const dbPath = path.join(path.dirname(tracker), 'manager.db');
+
+  syncFromSources({ dbPath, trackerPath: tracker, cronJobsPath: cron, now: '2026-09-22T08:00:00+08:00' });
+
+  const db = new DatabaseSync(dbPath);
+  assert.equal(db.prepare("SELECT next_step_date FROM applications WHERE company='待动作公司'").get().next_step_date, '2026-09-25');
+  assert.equal(db.prepare("SELECT next_step_date FROM applications WHERE company='已递确认公司'").get().next_step_date, '');
+  assert.equal(db.prepare("SELECT next_step_date FROM applications WHERE company='完成公司'").get().next_step_date, '');
+  assert.equal(db.prepare("SELECT count(*) AS n FROM applications WHERE next_step_date != '' AND next_step_date < '2026-09-22'").get().n, 0);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM tasks WHERE source='tracker'").get().n, 1);   // 只有待动作公司生成待办
+  db.close();
+});
