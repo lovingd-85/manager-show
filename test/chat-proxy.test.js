@@ -4,66 +4,8 @@
 // 不依赖真实上游；生产代码只转发用户文本，不直连模型、不生成假回复）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const http = require('node:http');
 const { startServer } = require('../support/server-harness');
-
-const UPSTREAM_KEY = 'test-upstream-key';
-
-// mock Hermes Agent API Server：实现 7A 勘察到的会话契约，记录调用并可注入延迟/故障
-function startMockHermes({ onChat, onSessions } = {}) {
-  const sessions = new Map();
-  const calls = { sessions: [], chats: [] };
-  const server = http.createServer((req, res) => {
-    let raw = '';
-    req.on('data', (c) => { raw += c; });
-    req.on('end', () => {
-      const url = new URL(req.url, 'http://mock');
-      const send = (code, obj) => {
-        res.writeHead(code, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(obj));
-      };
-      if (req.headers.authorization !== `Bearer ${UPSTREAM_KEY}`) {
-        return send(401, { error: 'invalid api key' });
-      }
-      if (req.method === 'POST' && url.pathname === '/api/sessions') {
-        const json = raw ? JSON.parse(raw) : {};
-        if (onSessions) { const r = onSessions(json); if (r) return r(send); }
-        const id = json.id || 'api_auto';
-        calls.sessions.push(json);
-        sessions.set(id, { id, title: json.title });
-        send(201, { object: 'hermes.session', session: { id, title: json.title } });
-      } else if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/chat$/.test(url.pathname)) {
-        const json = raw ? JSON.parse(raw) : {};
-        calls.chats.push({ id: url.pathname.split('/')[3], body: json });
-        const reply = () => send(200, {
-          object: 'hermes.session.chat.completion',
-          session_id: url.pathname.split('/')[3],
-          message: { role: 'assistant', content: `回声：${json.message}` },
-          usage: { input_tokens: 1, output_tokens: 1 },
-        });
-        if (onChat) { const r = onChat(json); if (r && r.delay) return setTimeout(reply, r.delay); if (r && r.fail) return send(r.fail, { error: r.error || '上游失败' }); }
-        reply();
-      } else if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/messages$/.test(url.pathname)) {
-        send(200, { messages: [
-          { role: 'user', content: '你好', timestamp: 1 },
-          { role: 'assistant', content: '回声：你好', timestamp: 2 },
-          { role: 'tool', content: '内部工具输出不应外传', timestamp: 3 },
-        ] });
-      } else {
-        send(404, { error: 'not found' });
-      }
-    });
-  });
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      resolve({
-        baseUrl: `http://127.0.0.1:${server.address().port}`,
-        calls,
-        close: () => new Promise((r) => server.close(r)),
-      });
-    });
-  });
-}
+const { startMockHermes, UPSTREAM_KEY } = require('../support/mock-hermes');
 
 async function openWithUpstream(mock, extraAppOptions = {}) {
   const s = await startServer({

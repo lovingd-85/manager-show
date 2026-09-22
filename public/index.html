@@ -79,6 +79,18 @@
     </div>
   </div>
 
+  <!-- Hermes 聊天抽屉：常驻右下入口，位于 #view 之外，视图重渲染不丢（7C） -->
+  <button class="btn chat-fab" id="btn-chat" aria-label="与 Hermes 对话">💬</button>
+  <div class="chat-drawer" id="chat-drawer" hidden>
+    <div class="chat-head">
+      <button class="btn btn-ghost icon-btn" id="chat-back" aria-label="返回会话列表" hidden>←</button>
+      <div class="chat-title" id="chat-title">Hermes 对话</div>
+      <button class="btn btn-ghost icon-btn" id="chat-close" aria-label="关闭聊天">✕</button>
+    </div>
+    <div class="chat-body" id="chat-body"></div>
+    <div class="chat-foot" id="chat-foot"></div>
+  </div>
+
   <!-- 移动端底部导航（≤760px 显示，与侧边栏同一路由表） -->
   <nav class="bottom-nav" id="bottom-nav" aria-label="移动端主导航">
     <a href="#/today" data-route="today"><span class="bn-ico" aria-hidden="true">◉</span><span>今日</span></a>
@@ -91,5 +103,6 @@
   <script src="/vendor/nebula.min.js"></script>
   <script src="/app.js"></script>
   <script src="/reminders.js"></script>
+  <script src="/chat.js"></script>
 </body>
 </html>
