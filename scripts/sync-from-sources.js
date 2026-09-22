@@ -37,7 +37,7 @@ function applicationStatus(text) {
   if (/未通过|不匹配|流程结束|拒绝/.test(text)) return '已拒绝';
   if (/Offer/.test(text)) return 'Offer';
   if (/AI 初试待完成|面试已约|面试待完成/.test(text)) return '面试';
-  if (/(?:笔试|测评)待完成/.test(text)) return '笔试';
+  if (/(?:笔试|测评)(?:待完成|待参加)/.test(text)) return '笔试';
   if (/已完成|(?:测评|笔试|面试).*(?:已过|完成)/.test(text)) return '流程完成';
   return '已投递';
 }
@@ -63,12 +63,29 @@ function ensureSourceColumns(db) {
   }
 }
 
-function replaceSource(db, table, source, records, columns) {
+// 重建某一来源的数据。``carry`` 里的列在重建时从"同一条目"（source+external_key）继承，
+// 用来保住人工勾选的完成状态 —— 追踪表只描述"发生了什么"，"我处理完了没有"是用户的状态，
+// 同步不能覆盖它。删除语义不变：追踪表里消失的条目仍会被删除。
+function replaceSource(db, table, source, records, columns, carry = []) {
+  const kept = new Map();
+  if (carry.length && records.length) {
+    const rows = db.prepare(
+      `SELECT external_key, ${carry.join(', ')} FROM ${table} WHERE source = ? AND external_key != ''`
+    ).all(source);
+    for (const row of rows) kept.set(row.external_key, row);
+  }
   db.prepare(`DELETE FROM ${table} WHERE source = ?`).run(source);
   if (!records.length) return;
   const sql = `INSERT INTO ${table} (${columns.join(', ')}, source, external_key) VALUES (${columns.map(() => '?').join(', ')}, ?, ?)`;
   const insert = db.prepare(sql);
-  for (const record of records) insert.run(...record.values, source, record.key);
+  for (const record of records) {
+    const values = [...record.values];
+    const previous = kept.get(record.key);
+    if (previous && previous.done) {   // 只有"已完成"是需要继承的用户状态
+      for (const column of carry) values[columns.indexOf(column)] = previous[column];
+    }
+    insert.run(...values, source, record.key);
+  }
 }
 
 function deleteLegacyApplicationDuplicates(db) {
@@ -104,7 +121,7 @@ function syncFromSources({ dbPath, trackerPath, cronJobsPath, now = nowIso() }) 
   const trackerEvents = [];
   for (const app of apps) {
     const action = `${app.row.statusText} ${app.row.timing}`;
-    const actionable = /(?:AI 初试|面试|笔试|测评)待完成|面试已约|(?:须|需要)[^。；]*投递/.test(action);
+    const actionable = /(?:AI 初试|面试)(?:待完成|已约|待参加)|(?:笔试|测评)(?:待完成|待参加)|(?:须|需要)[^。；]*投递/.test(action);
     if (!app.dateTime.date || !actionable) continue;
     const title = `${app.row.company}：${app.row.position}`;
     trackerTasks.push({ key: app.key, values: [title, '求职', app.dateTime.date, app.dateTime.date, 0, `${app.row.statusText}；${app.row.timing}`, now, null] });
@@ -120,10 +137,10 @@ function syncFromSources({ dbPath, trackerPath, cronJobsPath, now = nowIso() }) 
   try {
     deleteLegacyApplicationDuplicates(db);
     replaceSource(db, 'applications', 'tracker', apps, ['company', 'position', 'city', 'url', 'status', 'priority', 'applied_at', 'next_step', 'next_step_date', 'notes', 'created_at', 'updated_at']);
-    replaceSource(db, 'tasks', 'tracker', trackerTasks, ['title', 'category', 'due_date', 'focus_date', 'done', 'notes', 'created_at', 'done_at']);
+    replaceSource(db, 'tasks', 'tracker', trackerTasks, ['title', 'category', 'due_date', 'focus_date', 'done', 'notes', 'created_at', 'done_at'], ['done', 'done_at']);
     replaceSource(db, 'events', 'tracker', trackerEvents, ['title', 'date', 'start_time', 'end_time', 'location', 'notes']);
     deleteLegacyEventDuplicates(db);
-    replaceSource(db, 'tasks', 'cron', cronTasks, ['title', 'category', 'due_date', 'focus_date', 'done', 'notes', 'created_at', 'done_at']);
+    replaceSource(db, 'tasks', 'cron', cronTasks, ['title', 'category', 'due_date', 'focus_date', 'done', 'notes', 'created_at', 'done_at'], ['done', 'done_at']);
     replaceSource(db, 'events', 'cron', cronEvents, ['title', 'date', 'start_time', 'end_time', 'location', 'notes']);
     db.exec('COMMIT');
   } catch (error) {
