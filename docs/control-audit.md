@@ -2,7 +2,7 @@
 
 > 原则：保留控件必须有具体行为与对应测试；纯装饰改用 `span`；未实现能力说明原因，不提供「敬请期待」按钮。
 > 错误态统一约定：网络失败 → toast 显示服务端错误并保留输入（弹窗不关闭）；未登录 → 跳转登录页；数据被并发修改 → 明确提示原因。
-> 状态：2026-09-22，覆盖至计划 6C。聊天（7C）交付后需回填第 32 行。
+> 状态：2026-09-22，覆盖至计划 7C。
 
 | # | 页面 | 控件（可访问名称/selector） | 保留/删除 | 触发请求 | 可见结果 | 错误态 | 对应测试 |
 |---|------|------------------------------|-----------|----------|----------|--------|----------|
@@ -40,9 +40,13 @@
 | 31a | 提醒面板 | 查看事项 `[data-rem-view]` / 已读 `[data-rem-read]` / 取消 `[data-rem-cancel]` | 保留 | 深链导航 / PATCH read / PATCH cancelled | 打开事项详情；条目从列表消失、角标即时更新 | PATCH 失败 → toast，面板保持 | browser-reminders 已读与取消 |
 | 31b | 提醒面板 | 启用通知（可选）`#btn-reminders-notify` | 保留 | Notification.requestPermission | 授权后新未读发系统通知；拒绝/不支持如实说明，不影响站内提醒 | — | browser-reminders 通知拒绝路径 |
 | 31c | 任务/日程表单 | 提醒时间字段 `#mf-remind_at` / 日程内联 `[name=remind_at]`（可选，中国时间） | 保留 | 事项保存成功后 upsert 活跃提醒（POST/PATCH /api/reminders） | 面板出现对应提醒；同事项两次保存只更新不重复 | 提醒失败 → toast「事项已保存，提醒设置失败，请重试」，事项保留 | browser-reminders 表单设置/失败/upsert |
-| 32 | 全局 | 与 Hermes 对话（右下入口 + 常驻抽屉） | 计划中（7C 交付） | — | 同源代理连接 Hermes Agent，不直连模型 | — | 待 7C 回填 |
+| 32 | 全局 | 与 Hermes 对话 `#btn-chat`（右下常驻入口） | 保留 | 打开/关闭抽屉（#view 之外，路由切换不丢） | 会话列表 + 对话视图 | 列表加载失败 → toast | browser-chat 入口常驻 |
+| 32a | 聊天抽屉 | 开始新会话 `#chat-new-btn` / 会话条目 `.chat-conv` | 保留 | POST /api/chat/conversation → 进入对话视图 | 上游收到独立 manager_show 会话；重载后列表持久 | 上游未配置 → 503 如实提示，不产生本地会话 | browser-chat 创建会话/重载保持/未配置上游 |
+| 32b | 聊天抽屉 | 输入框 `#chat-input` + 发送 `#chat-send`（Enter 发送 / Shift+Enter 换行 / IME 组合中 Enter 不发送） | 保留 | POST /api/chat/conversation/:id/messages（幂等 requestId） | 用户消息即时上屏，回复渲染（纯文本，不执行上游 HTML） | 上游失败 → 错误占位 + 重试（同 requestId 不重复触发）；429/503 → 如实提示 | browser-chat 发送/输入语义/失败重试 |
+| 32c | 聊天抽屉 | 返回列表 `#chat-back` / 关闭 `#chat-close` / Esc | 保留 | 无（纯视图切换/关闭） | 返回会话列表；抽屉关闭；有打开的弹窗时 Esc 归弹窗 | — | browser-chat Esc 关闭 |
 
 ## 变更记录
 
 - 2026-09-22（5A）：删除 `#btn-reset-seed` 及其绑定与 `POST /api/seed/reset` 默认注册；`createApp({ allowSeedReset: true })` 仅隔离测试/演示显式开启（test/applications.test.js 已显式开启）；生产无入口、默认 404。
 - 2026-09-22（6C）：回填第 31 行并拆分为 31a/31b/31c——铃铛+角标+面板（查看事项/已读/取消）、可选系统通知（拒绝不影响中心）、任务/日程表单可选提醒字段（中国时间，upsert，失败不推翻已保存事项）。
+- 2026-09-22（7C）：回填第 32 行并拆分为 32a/32b/32c——右下常驻入口（#view 之外）、新会话/会话列表、输入框（Enter 发送/Shift+Enter 换行/IME 组合不发送、幂等重试）、返回/关闭/Esc。

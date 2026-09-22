@@ -70,6 +70,6 @@ Manager Show 生产部署（`/home/ubuntu/Manager_Show`）与宿主 gateway 无�
 ## 7. 门槛清单
 
 - [x] 7A 只读勘察（本文件）
-- [ ] 7B 同源代理（`src/hermes-chat.js` + `/api/chat/*`，可隔离测试）
-- [ ] 7C 常驻抽屉 UI（`public/chat.js`，#view 之外，Esc/Enter/IME）
+- [x] 7B 同源代理（`src/hermes-chat.js` + `/api/chat/*`，可隔离测试；提交 `d859399`）
+- [x] 7C 常驻抽屉 UI（`public/chat.js`，#view 之外，Esc/Enter/IME；提交见实施报告）
 - [ ] 7D 真实上游验收：**需父助手独立确认后执行**（用真实 key 跑通一轮会话）。若无法真实连通，如实报告「UI/代理已完成、真实接入未完成」。
